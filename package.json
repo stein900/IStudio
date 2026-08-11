@@ -1,0 +1,59 @@
+{
+  "name": "istudio-viewer",
+  "productName": "IStudio Viewer",
+  "version": "1.0.0",
+  "description": "Visionneuse d'images standalone (Electron)",
+  "main": "main.js",
+  "author": "AHG",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "fr.ahg.istudio.viewer",
+    "productName": "IStudio Viewer",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "jpg",
+          "jpeg",
+          "jfif",
+          "png",
+          "gif",
+          "bmp",
+          "webp",
+          "ico",
+          "svg",
+          "tif",
+          "tiff",
+          "avif"
+        ],
+        "name": "Image",
+        "description": "Fichier image",
+        "role": "Viewer"
+      }
+    ]
+  }
+}

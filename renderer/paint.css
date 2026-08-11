@@ -1,0 +1,398 @@
+/* Module Paint — éditeur d'annotations, même langage visuel que la visionneuse. */
+
+#paint {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* La visionneuse derrière ne doit pas capter le clavier ni la molette. */
+body.painting #stage,
+body.painting #strip-toggle {
+  pointer-events: none;
+}
+
+/* ---------- Barres d'outils ---------- */
+
+#paint-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 50px;
+  padding: 0 14px;
+  background: linear-gradient(180deg, #1a1a1f 0%, var(--bg-panel) 100%);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+#paint-toolrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.paint-toolrow-right {
+  margin-left: auto;
+}
+
+#paint-title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+}
+
+#paint-title-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+#paint-file-name {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+/* Boutons d'icônes du module (plus compacts que ceux de la visionneuse) */
+.paint-tb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.paint-tb:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.paint-tb:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.paint-tb.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+#paint .btn-labeled {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 13px 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+#paint .btn-labeled:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+#paint .btn-labeled:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+#paint .btn-labeled svg {
+  width: 16px;
+  height: 16px;
+}
+
+#paint .btn-primary {
+  border-color: rgba(110, 168, 255, 0.5);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+#paint .btn-primary:hover:not(:disabled) {
+  background: rgba(110, 168, 255, 0.24);
+}
+
+#paint-copy.is-active {
+  border-color: rgba(48, 179, 80, 0.6);
+  color: #4fd06c;
+  background: rgba(48, 179, 80, 0.12);
+}
+
+/* ---------- Palette et épaisseurs ---------- */
+
+.paint-swatch {
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  transition: transform 0.12s ease, box-shadow 0.15s ease;
+}
+
+.paint-swatch:hover {
+  transform: scale(1.12);
+}
+
+.paint-swatch.is-active {
+  box-shadow:
+    0 0 0 2px var(--bg-panel),
+    0 0 0 3.5px var(--accent);
+}
+
+.paint-swatch-custom {
+  appearance: none;
+  background: conic-gradient(#ff3b30, #ff9500, #ffd60a, #30b350, #4c8dff, #af52de, #ff3b30);
+  overflow: hidden;
+}
+
+.paint-swatch-custom::-webkit-color-swatch-wrapper,
+.paint-swatch-custom::-webkit-color-swatch {
+  opacity: 0; /* la pastille arc-en-ciel sert d'aperçu, la valeur vit ailleurs */
+}
+
+.paint-width-dot {
+  display: block;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.paint-fill-dot {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  border: 1.6px solid currentColor;
+}
+
+.paint-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-dim);
+}
+
+.paint-slider input[type='range'] {
+  width: 104px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ---------- Toile ---------- */
+
+#paint-stage {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, #131318 0%, var(--bg) 75%);
+}
+
+#paint-wrap {
+  position: relative;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  border-radius: 2px;
+}
+
+#paint-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none; /* le stylet/doigt dessine, il ne fait pas défiler */
+  border-radius: 2px;
+}
+
+/* ---------- Saisie de texte (posée sur la toile) ---------- */
+
+#paint-text-editor {
+  position: absolute;
+  z-index: 12;
+  background: transparent;
+  border: 1.5px dashed var(--accent);
+  border-radius: 4px;
+  padding: 2px 3px;
+  margin: 0;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-weight: 500;
+  line-height: 1.3; /* = TEXT_LINE_HEIGHT (paint.js) */
+  letter-spacing: normal;
+  white-space: pre;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+}
+
+/* ---------- Panneau des calques ---------- */
+
+#paint-layers {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 250px;
+  z-index: 15;
+  background: rgba(22, 22, 27, 0.88);
+  backdrop-filter: saturate(160%) blur(16px);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 10px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#paint-layers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+#paint-layers-head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+#paint-layers-head svg {
+  color: var(--accent);
+}
+
+#paint-layers ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 42vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.paint-layer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.paint-layer:hover {
+  background: var(--bg-hover);
+}
+
+.paint-layer.is-active {
+  background: var(--accent-soft);
+}
+
+.paint-layer-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.paint-layer.is-hidden .paint-layer-name {
+  opacity: 0.45;
+}
+
+.paint-layer input {
+  font: inherit;
+  flex: 1;
+  min-width: 0;
+  padding: 1px 5px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+
+.paint-layer-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.paint-layer-tools {
+  display: none;
+  align-items: center;
+}
+
+.paint-layer:hover .paint-layer-tools {
+  display: inline-flex;
+}
+
+#paint-layers-hint {
+  margin: 2px 4px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+/* ---------- Barre d'état ---------- */
+
+#paint-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 14px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+#paint-status-hint {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#paint-status-counts,
+#paint-status-layer {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

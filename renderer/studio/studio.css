@@ -1,0 +1,682 @@
+/* Studio — éditeur de montage (chargé à la demande, même langage visuel). */
+
+#studio {
+  position: fixed;
+  inset: 0;
+  z-index: 26;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body.studio-open #stage,
+body.studio-open #strip-toggle {
+  pointer-events: none;
+}
+
+.studio-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.studio-sep {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  margin: 0 8px;
+}
+
+/* ---------- Barre supérieure ---------- */
+
+#studio-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 50px;
+  padding: 0 14px;
+  background: linear-gradient(180deg, #1a1a1f 0%, var(--bg-panel) 100%);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+#studio-title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+}
+
+#studio-title-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+#studio-file-name {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+/* ---------- Boutons ---------- */
+
+.studio-tb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.studio-tb:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.studio-tb:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.studio-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 13px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.studio-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.studio-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.studio-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.studio-btn-primary {
+  border-color: rgba(110, 168, 255, 0.5);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.studio-btn-primary:hover:not(:disabled) {
+  background: rgba(110, 168, 255, 0.24);
+}
+
+/* ---------- Barre d'options de l'outil ---------- */
+
+#studio-optionsbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 38px;
+  padding: 0 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  font-size: 12.5px;
+}
+
+.studio-opt-toolname {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-dim);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.studio-opt-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.studio-opt-label {
+  color: var(--text-dim);
+}
+
+.studio-opt-value {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 52px;
+}
+
+.studio-opt-group input[type='range'] {
+  width: 140px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ---------- Corps ---------- */
+
+#studio-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* ---------- Barre d'outils verticale ---------- */
+
+#studio-toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 7px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.studio-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.studio-tool:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.studio-tool.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: rgba(110, 168, 255, 0.35);
+}
+
+#studio-color {
+  margin-top: auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px var(--bg-panel);
+}
+
+#studio-color input[type='color'] {
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* ---------- Scène ---------- */
+
+#studio-stage {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, #131318 0%, var(--bg) 75%);
+  min-width: 0;
+}
+
+#studio-wrap {
+  position: relative;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  /* damier de transparence sous le montage */
+  background-image:
+    linear-gradient(45deg, #23232a 25%, transparent 25%, transparent 75%, #23232a 75%),
+    linear-gradient(45deg, #23232a 25%, transparent 25%, transparent 75%, #23232a 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+  background-color: #1b1b21;
+}
+
+#studio-canvas,
+#studio-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+#studio-overlay {
+  pointer-events: none;
+}
+
+#studio-text-editor {
+  position: absolute;
+  z-index: 12;
+  background: transparent;
+  border: 1.5px dashed var(--accent);
+  border-radius: 4px;
+  padding: 2px 3px;
+  margin: 0;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-weight: 500;
+  line-height: 1.3; /* = TEXT_LINE_HEIGHT (core.js) */
+  white-space: pre;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+}
+
+/* ---------- Panneau des calques ---------- */
+
+#studio-layers {
+  width: 260px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 10px;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  min-height: 0;
+}
+
+#studio-layers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+#studio-layers-head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+#studio-layers-head svg {
+  color: var(--accent);
+}
+
+#studio-opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  padding: 0 2px;
+}
+
+#studio-opacity-row input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+#studio-opacity-val {
+  min-width: 38px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#studio-layers-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  flex: 1 1 auto;
+}
+
+.studio-layer {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+  border: 1px solid transparent;
+}
+
+.studio-layer:hover {
+  background: var(--bg-hover);
+}
+
+.studio-layer.is-active {
+  background: var(--accent-soft);
+  border-color: rgba(110, 168, 255, 0.35);
+}
+
+.studio-layer-kind {
+  display: inline-flex;
+  color: var(--text-dim);
+  width: 13px;
+}
+
+.studio-layer-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.studio-layer.is-hidden .studio-layer-name {
+  opacity: 0.45;
+}
+
+.studio-layer-opacity {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-layer-tools {
+  display: none;
+  align-items: center;
+}
+
+.studio-layer:hover .studio-layer-tools {
+  display: inline-flex;
+}
+
+.studio-layer-tools .studio-tb {
+  width: 24px;
+  height: 24px;
+}
+
+.studio-layer.drop-above {
+  box-shadow: 0 -2px 0 var(--accent);
+}
+
+.studio-layer.drop-below {
+  box-shadow: 0 2px 0 var(--accent);
+}
+
+/* ---------- Options de texte ---------- */
+
+.studio-font-select {
+  height: 28px;
+  padding: 0 8px;
+  background: #26262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12.5px;
+  cursor: pointer;
+  outline: none;
+}
+
+.studio-font-select:hover {
+  border-color: var(--border-strong);
+}
+
+.studio-bold-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.studio-bold-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.studio-bold-btn.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: rgba(110, 168, 255, 0.4);
+}
+
+.studio-stroke-color {
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  background: #26262d;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+/* ---------- Popup de réglages de brosse ---------- */
+
+#studio-brush-popup {
+  position: absolute;
+  z-index: 40;
+  width: 300px;
+  padding: 12px;
+  background: rgba(30, 30, 36, 0.96);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sbp-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#sbp-preview {
+  flex: 0 0 auto;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: #26262d;
+}
+
+.sbp-sliders {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sbp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.sbp-lab {
+  width: 58px;
+  flex: 0 0 auto;
+}
+
+.sbp-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.sbp-val {
+  width: 44px;
+  flex: 0 0 auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.sbp-presets-head {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: 6px 8px 4px;
+  background: #26262d;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+}
+
+#sbp-presets {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 2px;
+  max-height: 150px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 6px;
+  background: #26262d;
+  border: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
+}
+
+.sbp-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sbp-preset:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.sbp-preset canvas {
+  width: 30px;
+  height: 30px;
+}
+
+/* Retour visuel de la pipette (barre d'options) */
+
+#studio-picker-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  transition: transform 0.1s ease;
+}
+
+#studio-picker-swatch.picked {
+  transform: scale(1.12);
+  border-color: var(--accent);
+}
+
+#studio-picker-hex {
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  color: var(--text);
+  min-width: 78px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Bouton d'aperçu de pointe dans la barre d'options */
+
+.studio-tip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 5px 2px 3px;
+  background: #26262d;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-dim);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.studio-tip-btn:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.studio-tip-btn canvas {
+  width: 26px;
+  height: 26px;
+}
+
+/* ---------- Barre d'état ---------- */
+
+#studio-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 14px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+#studio-status-hint {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#studio-status-doc,
+#studio-status-layer {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
