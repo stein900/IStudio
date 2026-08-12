@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: blob:; style-src 'self'" />
-  <title>IStudio Viewer</title>
+  <title>IStudio</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="paint.css" />
 </head>
@@ -31,7 +31,7 @@
     </div>
 
     <div id="file-info">
-      <div id="file-name">IStudio Viewer</div>
+      <div id="file-name">IStudio</div>
       <div id="file-meta"></div>
     </div>
 
@@ -121,6 +121,13 @@
 
       <span class="toolbar-sep" aria-hidden="true"></span>
 
+      <div id="mode-switch" title="Basic : visionneuse épurée · Pro : analyse, métadonnées, notes et outils dataset (choix mémorisé)">
+        <button id="mode-basic" class="mode-opt">Basic</button>
+        <button id="mode-pro" class="mode-opt">Pro</button>
+      </div>
+
+      <span class="toolbar-sep" aria-hidden="true"></span>
+
       <button id="btn-film" class="icon-btn" title="Afficher/masquer le bandeau de miniatures">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -145,13 +152,87 @@
 
   <main id="stage">
     <div id="empty-state">
-      <svg class="state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="3" y="3" width="18" height="18" rx="2" />
-        <circle cx="8.5" cy="8.5" r="1.5" />
-        <path d="m21 15-5-5L5 21" />
-      </svg>
-      <p>Aucune image ouverte</p>
-      <p class="empty-hint">Ouvrez une image avec le bouton ci-dessus,<br />ou définissez IStudio Viewer comme application par défaut pour vos images.</p>
+      <div id="home-inner">
+        <div id="home-brand">
+          <img src="assets/istudio-logo.png" alt="" width="56" height="56" decoding="async" />
+          <span>IStudio</span>
+        </div>
+        <p id="home-sub">Visionneuse &amp; studio d'édition d'images</p>
+        <div id="home-actions">
+          <button id="home-open" class="home-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="m21 15-5-5L5 21" />
+            </svg>
+            <span class="home-card-title">Ouvrir une image</span>
+            <span class="home-card-sub">Parcourir vos fichiers — jpg, png, psd…</span>
+          </button>
+          <button id="home-studio" class="home-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="3" width="7" height="7" rx="1" />
+              <rect x="3" y="14" width="7" height="7" rx="1" />
+              <rect x="14" y="14" width="7" height="7" rx="1" />
+            </svg>
+            <span class="home-card-title">Nouveau projet</span>
+            <span class="home-card-sub">Studio : montage multi-calques, gabarits &amp; toile vierge</span>
+          </button>
+          <button id="home-paint" class="home-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
+            </svg>
+            <span class="home-card-title">Nouveau dessin</span>
+            <span class="home-card-sub">Paint : croquis et annotations rapides</span>
+          </button>
+          <button id="home-project" class="home-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+            </svg>
+            <span class="home-card-title">Ouvrir un projet</span>
+            <span class="home-card-sub">Reprendre un montage .istudio avec ses calques</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="newproj-backdrop" hidden>
+      <div id="newproj">
+        <div id="newproj-title">Nouveau projet</div>
+        <div class="np-row">
+          <label for="np-name">Nom du projet</label>
+          <input id="np-name" type="text" value="Sans titre" spellcheck="false" />
+        </div>
+        <div id="np-templates"></div>
+        <div class="np-row np-dims">
+          <label for="np-w">Largeur</label>
+          <input id="np-w" type="number" min="1" max="20000" value="1920" />
+          <label for="np-h">Hauteur</label>
+          <input id="np-h" type="number" min="1" max="20000" value="1080" />
+          <label for="np-dpi">DPI</label>
+          <input id="np-dpi" type="number" min="18" max="1200" value="72" />
+        </div>
+        <div class="np-row">
+          <label for="np-bg">Arrière-plan</label>
+          <select id="np-bg">
+            <option value="#ffffff">Blanc</option>
+            <option value="#000000">Noir</option>
+            <option value="transparent">Transparent</option>
+            <option value="custom">Couleur personnalisée…</option>
+          </select>
+          <input id="np-bg-color" type="color" value="#2f6fd8" hidden />
+          <label for="np-mode">Mode</label>
+          <select id="np-mode">
+            <option value="rgb">RVB</option>
+            <option value="cmyk">CMJN</option>
+          </select>
+        </div>
+        <p id="np-note" hidden>Le mode CMJN est enregistré avec le projet ; l'affichage et l'édition restent en RVB.</p>
+        <div id="np-buttons">
+          <button id="np-cancel" class="btn-labeled">Annuler</button>
+          <button id="np-create" class="btn-labeled np-primary">Créer le projet</button>
+        </div>
+      </div>
     </div>
     <img id="image" alt="" draggable="false" hidden />
     <div id="error-state" hidden>

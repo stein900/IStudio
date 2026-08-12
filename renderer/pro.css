@@ -1,0 +1,248 @@
+/* Mode Pro — panneau d'analyse, overlay et badges du bandeau */
+
+#pro-panel {
+  position: fixed;
+  right: 0;
+  width: 296px;
+  z-index: 20;
+  overflow-y: auto;
+  background: var(--bg-panel, #17171c);
+  border-left: 1px solid var(--border);
+  padding: 12px 14px 20px;
+  scrollbar-width: thin;
+}
+
+.pro-head {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.4px;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.pro-sec {
+  padding: 10px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pro-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pro-label {
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+}
+
+.pro-mini {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.pro-btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.pro-btn:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.pro-btn.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: rgba(110, 168, 255, 0.4);
+}
+
+.pro-seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.pro-seg button {
+  min-width: 30px;
+  height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.pro-seg button.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+#pro-hist,
+#pro-profile {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #131318;
+}
+
+.pro-grid2 {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 3px 10px;
+  font-size: 11.5px;
+}
+
+.pro-grid2 > span:nth-child(odd) {
+  color: var(--text-dim);
+}
+
+.pro-grid2 > span:nth-child(even) {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#pro-grid-step {
+  width: 62px;
+  height: 26px;
+  padding: 0 6px;
+  background: #26262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 11.5px;
+  outline: none;
+}
+
+#pro-sort,
+#pro-filter {
+  height: 26px;
+  padding: 0 6px;
+  background: #26262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 11.5px;
+  cursor: pointer;
+  outline: none;
+}
+
+#pro-stars {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.pro-star {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.pro-star.is-active {
+  color: #ffd166;
+}
+
+/* Overlay (grille, mesure) au-dessus de l'image */
+#pro-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* Comparaison */
+#pro-compare {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  gap: 10px;
+  padding: 14px;
+  background: var(--bg);
+}
+
+.pro-cmp-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.pro-cmp-cell img,
+.pro-cmp-cell canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-width: 100%;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #131318;
+}
+
+.pro-cmp-cell span {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Badges du bandeau : note et drapeaux */
+.thumb .pro-badge {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(10, 10, 14, 0.75);
+  color: #ffd166;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.thumb.pro-pick {
+  border-color: rgba(90, 220, 120, 0.8);
+  box-shadow: 0 0 0 1px rgba(90, 220, 120, 0.5);
+}
+
+.thumb.pro-reject {
+  border-color: rgba(255, 90, 90, 0.8);
+  box-shadow: 0 0 0 1px rgba(255, 90, 90, 0.5);
+  opacity: 0.45;
+}

@@ -1,8 +1,8 @@
 {
-  "name": "istudio-viewer",
-  "productName": "IStudio Viewer",
+  "name": "istudio",
+  "productName": "IStudio",
   "version": "1.0.0",
-  "description": "Visionneuse d'images standalone (Electron)",
+  "description": "IStudio — Images Studio : visionneuse et studio d'édition d'images",
   "main": "main.js",
   "author": "AHG",
   "license": "MIT",
@@ -11,12 +11,13 @@
     "dist": "electron-builder --win"
   },
   "devDependencies": {
+    "ag-psd": "^31.0.2",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8"
   },
   "build": {
     "appId": "fr.ahg.istudio.viewer",
-    "productName": "IStudio Viewer",
+    "productName": "IStudio",
     "directories": {
       "output": "dist"
     },
@@ -53,7 +54,14 @@
         "name": "Image",
         "description": "Fichier image",
         "role": "Viewer"
+      },
+      {
+        "ext": "psd",
+        "name": "Document Photoshop",
+        "description": "Document Photoshop (calques)",
+        "role": "Editor"
       }
     ]
-  }
+  },
+  "dependencies": {}
 }
