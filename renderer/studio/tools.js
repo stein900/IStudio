@@ -36,7 +36,7 @@ window.StudioTools = (() => {
     icon: 'pointer',
     label: 'Déplacement (V) — sélectionner, déplacer, redimensionner, pivoter',
     cursor: 'default',
-    hint: 'Cliquer : sélectionner · glisser : déplacer · poignées : redimensionner (Maj = libre) · poignée du haut : pivoter (Maj = pas de 15°)',
+    hint: 'Cliquer : sélectionner · glisser : déplacer · poignées : redimensionner, le côté opposé reste fixe (Maj = libre, Alt = depuis le centre) · poignée du haut : pivoter (Maj = 15°)',
     drag: null,
     transforming: false,
     onDown(ed, p) {
@@ -58,7 +58,7 @@ window.StudioTools = (() => {
     },
     onMove(ed, p, e) {
       if (this.transforming) {
-        ed.updateTransform(p, e.shiftKey);
+        ed.updateTransform(p, e.shiftKey, e.altKey);
         return;
       }
       if (!this.drag) {
@@ -92,6 +92,84 @@ window.StudioTools = (() => {
     },
   });
 
+  /* ---------- Sélections : rectangle, ellipse ---------- */
+
+  function makeMarqueeTool({ id, key, icon, label, ellipse }) {
+    register({
+      id,
+      key,
+      icon,
+      label,
+      cursor: 'crosshair',
+      hint: 'Glisser pour sélectionner · Maj : ajouter à la sélection · Ctrl+A tout, Ctrl+Maj+I inverser, Ctrl+D désélectionner',
+      draft: null,
+      onDown(ed, p, e) {
+        this.draft = { a: p, b: p, additive: e.shiftKey };
+        ed.setSelectionDraft({ kind: ellipse ? 'ellipse' : 'rect', a: p, b: p });
+      },
+      onMove(ed, p) {
+        if (!this.draft) return;
+        this.draft.b = p;
+        ed.setSelectionDraft({ kind: ellipse ? 'ellipse' : 'rect', a: this.draft.a, b: p });
+      },
+      onUp(ed) {
+        if (!this.draft) return;
+        const { a, b, additive } = this.draft;
+        this.draft = null;
+        ed.setSelectionDraft(null);
+        const x = Math.min(a.x, b.x);
+        const y = Math.min(a.y, b.y);
+        const w = Math.abs(b.x - a.x);
+        const h = Math.abs(b.y - a.y);
+        if (w < 2 || h < 2) {
+          if (!additive) ed.deselect();
+          return;
+        }
+        const path = new Path2D();
+        if (ellipse) path.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+        else path.rect(x, y, w, h);
+        ed.finishSelection({ path, bounds: { x, y, w, h } }, additive);
+      },
+      options(ed) {
+        return ed.buildSelectionActions();
+      },
+    });
+  }
+
+  makeMarqueeTool({
+    id: 'select-rect',
+    key: 'm',
+    icon: 'selectRect',
+    label: 'Sélection rectangle (M)',
+    ellipse: false,
+  });
+  makeMarqueeTool({
+    id: 'select-ellipse',
+    key: 'o',
+    icon: 'selectEllipse',
+    label: 'Sélection ellipse (O)',
+    ellipse: true,
+  });
+
+  /* ---------- Baguette magique (sélection par couleur) ---------- */
+
+  register({
+    id: 'wand',
+    key: 'a',
+    icon: 'wandSelect',
+    label: 'Baguette magique (A) — sélectionner par couleur',
+    cursor: 'crosshair',
+    hint: 'Cliquer : sélectionne la couleur semblable sur le calque actif · Maj : ajouter · Contigu : zone connexe seulement',
+    onDown(ed, p, e) {
+      ed.wandSelect(p, e.shiftKey);
+    },
+    onMove() {},
+    onUp() {},
+    options(ed) {
+      return ed.buildWandOptions();
+    },
+  });
+
   /* ---------- Lasso ---------- */
 
   register({
@@ -100,11 +178,12 @@ window.StudioTools = (() => {
     icon: 'lasso',
     label: 'Lasso (L) — sélection à main levée',
     cursor: 'crosshair',
-    hint: 'Entourer une zone puis : copier/couper en calque, effacer, ou peindre dedans (la sélection borne crayon et gomme)',
+    hint: 'Entourer une zone (Maj : ajouter à la sélection) puis : copier/couper en calque, effacer, ou peindre dedans',
     pts: null,
-    onDown(ed, p) {
-      ed.setSelection(null);
+    additive: false,
+    onDown(ed, p, e) {
       this.pts = [p];
+      this.additive = e.shiftKey;
       ed.setLassoPreview(this.pts);
     },
     onMove(ed, p) {
@@ -114,31 +193,14 @@ window.StudioTools = (() => {
     },
     onUp(ed) {
       if (!this.pts) return;
-      if (this.pts.length >= 3) ed.setSelection(C.buildSelection(this.pts));
+      if (this.pts.length >= 3) ed.finishSelection(C.buildSelection(this.pts), this.additive);
+      else if (!this.additive) ed.deselect();
       this.pts = null;
       ed.setLassoPreview(null);
       ed.updateOptionsBar();
     },
     options(ed) {
-      const box = document.createElement('div');
-      box.className = 'studio-opt-group';
-      const has = Boolean(ed.selection());
-      const mk = (label, title, fn, primary) => {
-        const b = document.createElement('button');
-        b.className = primary ? 'studio-btn studio-btn-primary' : 'studio-btn';
-        b.textContent = label;
-        b.title = title;
-        b.disabled = !has;
-        b.addEventListener('click', fn);
-        return b;
-      };
-      box.append(
-        mk('Copier en calque', 'Duplique la zone sélectionnée sur un nouveau calque (Ctrl+J)', () => ed.selectionToLayer(false), true),
-        mk('Couper en calque', 'Déplace la zone sélectionnée sur un nouveau calque', () => ed.selectionToLayer(true)),
-        mk('Effacer', 'Efface les pixels de la sélection sur le calque actif (Suppr)', () => ed.eraseSelection()),
-        mk('Désélectionner', 'Abandonne la sélection (Ctrl+D)', () => ed.deselect())
-      );
-      return box;
+      return ed.buildSelectionActions();
     },
   });
 
@@ -176,10 +238,14 @@ window.StudioTools = (() => {
     icon: 'pencil',
     label: 'Pinceau (B) — peindre sur le calque actif',
     cursor: 'crosshair',
-    hint: 'Peint sur le calque actif (raster) · clic droit sur la scène : réglages de la brosse · une sélection borne le trait',
+    hint: 'Peint sur le calque actif (raster) · Alt + clic : pipette · clic droit : réglages de la brosse · une sélection borne le trait',
     stroke: null,
     last: null,
-    onDown(ed, p) {
+    onDown(ed, p, e) {
+      if (e.altKey) {
+        ed.pickColor(p);
+        return;
+      }
       const l = ed.requireRaster();
       if (!l) return;
       this.stroke = ed.beginBrushStroke(l, { toolId: 'pencil', erase: false });
@@ -197,6 +263,80 @@ window.StudioTools = (() => {
     },
     options(ed) {
       return ed.buildBrushOptions('pencil');
+    },
+  });
+
+  /* ---------- Tampon de duplication ---------- */
+
+  register({
+    id: 'clone',
+    key: 's',
+    icon: 'stamp',
+    label: 'Tampon de duplication (S) — cloner une zone de l’image',
+    cursor: 'crosshair',
+    hint: 'Alt + clic : définir la source · puis peindre pour dupliquer la source (retouche, suppression de défauts)',
+    src: null,
+    stroke: null,
+    last: null,
+    onDown(ed, p, e) {
+      if (e.altKey) {
+        this.src = p;
+        ed.status('Source du tampon définie — peignez pour dupliquer depuis ce point.');
+        return;
+      }
+      if (!this.src) {
+        ed.status('Alt + clic d’abord, pour définir la source à dupliquer.');
+        return;
+      }
+      const l = ed.requireRaster();
+      if (!l) return;
+      this.stroke = ed.beginCloneStroke(l, this.src, p);
+      ed.cloneStampSegment(this.stroke, p, p);
+      this.last = p;
+    },
+    onMove(ed, p) {
+      if (!this.stroke) return;
+      ed.cloneStampSegment(this.stroke, this.last, p);
+      this.last = p;
+    },
+    onUp(ed) {
+      if (this.stroke) ed.endBrushStroke(this.stroke);
+      this.stroke = null;
+    },
+    options(ed) {
+      return ed.buildBrushOptions('clone');
+    },
+  });
+
+  /* ---------- Retouche (flou, netteté, doigt, éclaircir, assombrir) ---------- */
+
+  register({
+    id: 'retouch',
+    key: 'r',
+    icon: 'droplet',
+    label: 'Retouche (R) — flou, netteté, doigt, éclaircir, assombrir',
+    cursor: 'crosshair',
+    hint: 'Peindre pour retoucher localement · le mode et l’intensité se choisissent dans la barre d’options · clic droit : réglages de la brosse',
+    stroke: null,
+    last: null,
+    onDown(ed, p) {
+      const l = ed.requireRaster();
+      if (!l) return;
+      this.stroke = ed.beginRetouchStroke(l);
+      ed.retouchStampSegment(this.stroke, p, p);
+      this.last = p;
+    },
+    onMove(ed, p) {
+      if (!this.stroke) return;
+      ed.retouchStampSegment(this.stroke, this.last, p);
+      this.last = p;
+    },
+    onUp(ed) {
+      if (this.stroke) ed.endBrushStroke(this.stroke);
+      this.stroke = null;
+    },
+    options(ed) {
+      return ed.buildRetouchOptions();
     },
   });
 
@@ -229,6 +369,118 @@ window.StudioTools = (() => {
     },
     options(ed) {
       return ed.buildBrushOptions('eraser');
+    },
+  });
+
+  /* ---------- Gomme magique ---------- */
+
+  register({
+    id: 'magic',
+    key: 'w',
+    icon: 'wand',
+    label: 'Gomme magique (W) — retirer un fond ou détourer un objet',
+    cursor: 'crosshair',
+    hint: 'Cliquer une couleur : elle devient transparente · Contigu coché = zone connexe seulement (détourage), décoché = tout le calque (fond) · Tolérance et Adoucir règlent la finesse',
+    onDown(ed, p) {
+      ed.magicErase(p);
+    },
+    onMove() {},
+    onUp() {},
+    options(ed) {
+      return ed.buildMagicOptions();
+    },
+  });
+
+  /* ---------- Pot de peinture ---------- */
+
+  register({
+    id: 'bucket',
+    key: 'g',
+    icon: 'bucket',
+    label: 'Pot de peinture (G) — remplir une zone de couleur',
+    cursor: 'crosshair',
+    hint: 'Cliquer : remplit la zone de couleur semblable avec la couleur active · réglages : tolérance, opacité, contigu · une sélection borne le remplissage',
+    onDown(ed, p) {
+      ed.bucketFill(p);
+    },
+    onMove() {},
+    onUp() {},
+    options(ed) {
+      return ed.buildBucketOptions();
+    },
+  });
+
+  /* ---------- Dégradé ---------- */
+
+  register({
+    id: 'gradient',
+    key: 'd',
+    icon: 'gradient',
+    label: 'Dégradé (D) — de la couleur active vers la seconde couleur ou le transparent',
+    cursor: 'crosshair',
+    hint: 'Glisser du départ à l’arrivée · linéaire ou radial · vers la seconde couleur ou le transparent · une sélection borne le dégradé',
+    drag: null,
+    onDown(ed, p) {
+      this.drag = { a: p, b: p };
+      ed.setGradientPreview(this.drag);
+    },
+    onMove(ed, p) {
+      if (!this.drag) return;
+      this.drag.b = p;
+      ed.setGradientPreview(this.drag);
+    },
+    onUp(ed) {
+      if (!this.drag) return;
+      const { a, b } = this.drag;
+      this.drag = null;
+      ed.setGradientPreview(null);
+      if (Math.hypot(b.x - a.x, b.y - a.y) >= 2) ed.applyGradient(a, b);
+    },
+    options(ed) {
+      return ed.buildGradientOptions();
+    },
+  });
+
+  /* ---------- Formes (rectangle, ellipse, ligne, flèche) ---------- */
+
+  register({
+    id: 'shape',
+    key: 'u',
+    icon: 'shapes',
+    label: 'Formes (U) — rectangle, ellipse, ligne, flèche',
+    cursor: 'crosshair',
+    hint: 'Glisser pour tracer la forme (Maj : carré / cercle / ligne à 45°) · contour ou rempli, épaisseur réglable · dessine avec la couleur active',
+    drag: null,
+    constrain(a, p, shiftKey, kind) {
+      if (!shiftKey) return p;
+      const dx = p.x - a.x;
+      const dy = p.y - a.y;
+      if (kind === 'line' || kind === 'arrow') {
+        const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+        const d = Math.hypot(dx, dy);
+        return { x: a.x + Math.cos(angle) * d, y: a.y + Math.sin(angle) * d };
+      }
+      const m = Math.max(Math.abs(dx), Math.abs(dy));
+      return { x: a.x + Math.sign(dx || 1) * m, y: a.y + Math.sign(dy || 1) * m };
+    },
+    onDown(ed, p) {
+      this.drag = { a: p, b: p };
+      ed.setShapeDraft(this.drag);
+    },
+    onMove(ed, p, e) {
+      if (!this.drag) return;
+      this.drag.b = this.constrain(this.drag.a, p, e.shiftKey, ed.shapeKind());
+      ed.setShapeDraft(this.drag);
+    },
+    onUp(ed) {
+      if (!this.drag) return;
+      const { a, b } = this.drag;
+      this.drag = null;
+      ed.setShapeDraft(null);
+      if (Math.hypot(b.x - a.x, b.y - a.y) >= 2) ed.applyShape(a, b);
+    },
+    options(ed) {
+      return ed.buildShapeOptions();
     },
   });
 

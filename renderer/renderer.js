@@ -103,6 +103,7 @@ function applyTransform() {
   image.style.transform =
     `translate(-50%, -50%) translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
   zoomLabel.textContent = state.fit ? 'Ajusté' : `${Math.round(state.zoom * 100)} %`;
+  if (window.Pro && window.Pro.active()) window.Pro.onViewChanged();
 }
 
 function clampZoom(z) {
@@ -178,23 +179,32 @@ function render() {
   if (!hasFile) {
     counter.textContent = '–';
     zoomLabel.textContent = '';
-    fileNameEl.textContent = 'IStudio Viewer';
+    fileNameEl.textContent = 'IStudio';
     fileMetaEl.textContent = '';
-    window.viewer.setTitle('IStudio Viewer');
+    window.viewer.setTitle('IStudio');
+    if (window.Pro && window.Pro.active()) window.Pro.onImageShown();
     return;
   }
 
   counter.textContent = `${state.index + 1} / ${state.files.length}`;
   fileNameEl.textContent = file.name;
-  window.viewer.setTitle(`${file.name} — IStudio Viewer`);
+  window.viewer.setTitle(`${file.name} — IStudio`);
 
-  image.src = file.url;
+  if (isPsdFile(file)) {
+    showPsd(file);
+  } else {
+    image.src = file.url;
+  }
   refreshFileStat(file);
   updateThumbSelection();
+  if (window.Pro && window.Pro.active()) window.Pro.onImageShown();
 }
 
 image.addEventListener('load', () => {
-  setFit();
+  // le mode Pro peut conserver la vue (verrou zoom/pan, bascule de canal)
+  if (!(window.Pro && window.Pro.active() && window.Pro.onImageElementLoad())) {
+    setFit();
+  }
   updateFileMeta();
 });
 
@@ -232,25 +242,143 @@ const THUMB_PAGE = 50;
 let thumbsLoaded = 0;
 let thumbMoreBtn = null;
 
+/* Vignettes économes : jamais l'image pleine résolution dans une tuile.
+   1. cache de miniatures Windows (Explorateur) via nativeImage — instantané
+      et sans décodage dans notre processus ;
+   2. sinon décodage RÉDUIT (createImageBitmap redimensionné) : ~30 Ko
+      retenus par vignette au lieu de dizaines de Mo pour une photo 25 Mpx ;
+   3. dernier recours : le fichier lui-même (SVG et formats légers).
+   Le tout piloté par un IntersectionObserver + file d'attente bornée. */
+
+const THUMB_PARALLEL = 4;
+const thumbQueue = [];
+let thumbActive = 0;
+
+function pumpThumbs() {
+  while (thumbActive < THUMB_PARALLEL && thumbQueue.length) {
+    const job = thumbQueue.shift();
+    thumbActive += 1;
+    job().finally(() => {
+      thumbActive -= 1;
+      pumpThumbs();
+    });
+  }
+}
+
+function queueThumb(job) {
+  thumbQueue.push(job);
+  pumpThumbs();
+}
+
+/** Décodage réduit côté renderer (secours si Windows n'a pas de vignette). */
+async function thumbFromDecode(file) {
+  try {
+    const data = await window.viewer.readFile(file.path);
+    if (!data) return null;
+    const blob = new Blob([data], { type: MIME_BY_EXT[extOf(file.name)] || 'application/octet-stream' });
+    const bmp = await createImageBitmap(blob, { resizeWidth: 256, resizeQuality: 'low' });
+    const canvas = document.createElement('canvas');
+    canvas.width = bmp.width;
+    canvas.height = bmp.height;
+    canvas.getContext('2d').drawImage(bmp, 0, 0);
+    bmp.close();
+    const out = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
+    return out ? URL.createObjectURL(out) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadThumb(btn, file) {
+  if (btn.dataset.loaded) return;
+  btn.dataset.loaded = '1';
+  let url = file.thumbUrl || null;
+  if (!url) {
+    const data = await window.viewer.fileThumbnail(file.path);
+    if (data && data.byteLength) {
+      url = URL.createObjectURL(new Blob([data], { type: 'image/jpeg' }));
+    } else if (!isPsdFile(file)) {
+      url = await thumbFromDecode(file);
+      if (!url) url = file.url; // SVG et cas limites : décodage direct
+    }
+    file.thumbUrl = url;
+  }
+  if (!url) return; // PSD sans vignette système : la pastille reste
+  const img = document.createElement('img');
+  img.alt = file.name;
+  img.decoding = 'async';
+  img.addEventListener(
+    'load',
+    () => {
+      // la tuile adopte le ratio réel de l'image (hauteur fixe, largeur
+      // bornée min/max en CSS — panoramiques et portraits lisibles)
+      if (img.naturalWidth && img.naturalHeight) {
+        btn.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+      }
+      const ph = btn.querySelector('.thumb-ph, .thumb-psd');
+      if (ph) ph.replaceWith(img);
+    },
+    { once: true }
+  );
+  img.src = url;
+}
+
+const thumbObserver = new IntersectionObserver(
+  (entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      thumbObserver.unobserve(e.target);
+      const file = state.files[Number(e.target.dataset.index)];
+      if (file) queueThumb(() => loadThumb(e.target, file));
+    }
+  },
+  { root: null, rootMargin: '600px' }
+);
+
 function makeThumb(file, i) {
   const btn = document.createElement('button');
   btn.className = 'thumb';
   btn.title = file.name;
   btn.dataset.index = String(i);
 
-  const img = document.createElement('img');
-  img.src = file.url;
-  img.alt = file.name;
-  img.loading = 'lazy';
-  img.decoding = 'async';
-
   const label = document.createElement('span');
   label.className = 'thumb-name';
   label.textContent = file.name;
 
-  btn.append(img, label);
-  btn.addEventListener('click', () => goTo(i));
+  const ph = document.createElement('span');
+  if (isPsdFile(file)) {
+    ph.className = 'thumb-psd';
+    ph.textContent = 'PSD';
+  } else {
+    ph.className = 'thumb-ph';
+  }
+  btn.append(ph, label);
+  btn.addEventListener('click', (e) => {
+    // mode Pro : Ctrl + clic choisit l'image B de la comparaison
+    if (e.ctrlKey && window.Pro && window.Pro.active()) {
+      window.Pro.setCompareIndex(i);
+      return;
+    }
+    goTo(i);
+  });
+  thumbObserver.observe(btn);
   return btn;
+}
+
+/** Rafraîchit la vignette d'une tuile (après une édition du fichier). */
+function refreshThumbAt(index, file) {
+  const tile = filmstrip.querySelector(`.thumb[data-index="${index}"]`);
+  if (!tile) return;
+  if (file.thumbUrl && file.thumbUrl.startsWith('blob:')) URL.revokeObjectURL(file.thumbUrl);
+  file.thumbUrl = null;
+  delete tile.dataset.loaded;
+  const old = tile.querySelector('img');
+  if (old) {
+    const ph = document.createElement('span');
+    ph.className = 'thumb-ph';
+    old.replaceWith(ph);
+  }
+  queueThumb(() => loadThumb(tile, file));
 }
 
 function appendThumbs(upTo) {
@@ -280,12 +408,17 @@ function appendThumbs(upTo) {
     thumbMoreBtn.addEventListener('click', () => appendThumbs(thumbsLoaded + THUMB_PAGE));
     filmstrip.appendChild(thumbMoreBtn);
   }
+  buildFilmstripDone();
 }
 
 function ensureThumbLoaded(index) {
   if (index >= thumbsLoaded) {
     appendThumbs(Math.ceil((index + 1) / THUMB_PAGE) * THUMB_PAGE);
   }
+}
+
+function buildFilmstripDone() {
+  if (window.Pro && window.Pro.active()) window.Pro.onFilmstrip();
 }
 
 function buildFilmstrip() {
@@ -301,6 +434,7 @@ function buildFilmstrip() {
   const needed = Math.max(THUMB_PAGE, state.index + 1);
   appendThumbs(Math.ceil(needed / THUMB_PAGE) * THUMB_PAGE);
   updateThumbSelection();
+  buildFilmstripDone();
 }
 
 function updateThumbSelection() {
@@ -358,8 +492,24 @@ function prev() {
 function loadContext(context) {
   if (!context) return;
   if (cropMode) exitCrop();
+  // libère les vignettes et rendus PSD de l'ancien contexte (URL blob)
+  for (const f of state.files) {
+    if (f.thumbUrl && f.thumbUrl.startsWith('blob:')) URL.revokeObjectURL(f.thumbUrl);
+    if (f.psdUrl) URL.revokeObjectURL(f.psdUrl);
+  }
+  thumbQueue.length = 0;
   state.files = context.files;
   state.index = context.index;
+  buildFilmstrip();
+  render();
+  if (window.Pro && window.Pro.active()) window.Pro.onContext();
+}
+
+/* Réordonne / filtre la galerie sans toucher aux vignettes déjà chargées
+   (mode Pro : tri et filtres — les objets fichiers restent les mêmes). */
+function reorderContext(files, index) {
+  state.files = files;
+  state.index = Math.max(0, Math.min(index, files.length - 1));
   buildFilmstrip();
   render();
 }
@@ -438,7 +588,180 @@ const MIME_BY_EXT = {
   tif: 'image/tiff',
   tiff: 'image/tiff',
   avif: 'image/avif',
+  psd: 'image/vnd.adobe.photoshop',
 };
+
+/* ---------- PSD (Photoshop) ----------
+   Lecture via ag-psd, chargé à la demande : la visionneuse affiche le
+   composite aplati, et Studio ouvre le document avec ses calques séparés
+   (position, opacité, mode de fusion, visibilité). */
+
+const PSD_BLEND = {
+  normal: 'normal',
+  multiply: 'multiply',
+  screen: 'screen',
+  overlay: 'overlay',
+  darken: 'darken',
+  lighten: 'lighten',
+  'color dodge': 'color-dodge',
+  'color burn': 'color-burn',
+  'hard light': 'hard-light',
+  'soft light': 'soft-light',
+  difference: 'difference',
+  exclusion: 'exclusion',
+  hue: 'hue',
+  saturation: 'saturation',
+  color: 'color',
+  luminosity: 'luminosity',
+};
+
+function isPsdFile(file) {
+  return extOf(file.name) === 'psd';
+}
+
+let psdLoading = null;
+
+function ensurePsdLoaded() {
+  if (!psdLoading) {
+    // copie embarquée d'ag-psd, corrigée : lecture des paramètres de masque
+    // avant le « real mask » (ordre de la spec Adobe) — sinon certains PSD
+    // valides échouent avec « Invalid realMask size »
+    psdLoading = loadScript('vendor/ag-psd.js').catch((err) => {
+      psdLoading = null;
+      throw err;
+    });
+  }
+  return psdLoading;
+}
+
+async function decodePsdFile(file) {
+  await ensurePsdLoaded();
+  const data = await window.viewer.readFile(file.path);
+  if (!data) return null;
+  const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  try {
+    return window.agPsd.readPsd(buf);
+  } catch {
+    return null;
+  }
+}
+
+/** Calque texte PSD → spécification de calque texte éditable Studio
+    (contenu, corps, couleur, gras/italique/souligné/barré, police). */
+function psdTextSpec(ch) {
+  const t = ch.text;
+  const style = t.style || (t.styleRuns && t.styleRuns[0] && t.styleRuns[0].style) || {};
+  const scaleY = Array.isArray(t.transform) ? Math.abs(t.transform[3]) || 1 : 1;
+  const fontSize = Math.max(4, Math.round((style.fontSize || 24) * scaleY));
+  const fc = style.fillColor || {};
+  const hex = (v) =>
+    Math.max(0, Math.min(255, Math.round(v || 0)))
+      .toString(16)
+      .padStart(2, '0');
+  const color = fc.r !== undefined ? `#${hex(fc.r)}${hex(fc.g)}${hex(fc.b)}` : '#000000';
+  const rawName = (style.font && style.font.name) || '';
+  // « Arial-BoldMT » → famille « Arial » ; « SegoeUI » → « Segoe UI »
+  let family = rawName.split('-')[0].replace(/(PSMT|PS|MT)$/, '');
+  family = family.replace(/([a-z\d])([A-Z])/g, '$1 $2').trim();
+  return {
+    kind: 'text',
+    name: ch.name || 'Texte',
+    text: t.text.replace(/\r\n?/g, '\n').replace(/\s+$/, ''),
+    canvas: ch.canvas || null, // rendu d'origine, pour le composite aplati
+    x: Math.round(ch.left || 0),
+    // le moteur de texte de Studio ajoute un demi-interligne (1,3) au-dessus
+    // de la première ligne : on le retranche pour garder la position PSD
+    y: Math.round((ch.top || 0) - 0.15 * fontSize),
+    fontSize,
+    color,
+    bold: Boolean(style.fauxBold) || /bold/i.test(rawName),
+    italic: Boolean(style.fauxItalic) || /italic|oblique/i.test(rawName),
+    underline: Boolean(style.underline),
+    strike: Boolean(style.strikethrough),
+    font: family ? `"${family}"` : '"Segoe UI"',
+    opacity: typeof ch.opacity === 'number' ? ch.opacity : 1,
+    blend: PSD_BLEND[ch.blendMode] || 'normal',
+    visible: !ch.hidden,
+  };
+}
+
+/** Aplatie l'arborescence (les groupes sont parcourus, leurs calques gardent
+    leur ordre d'empilement) en calques prêts pour Studio — les calques de
+    texte PSD restent éditables. */
+function collectPsdLayers(node, out) {
+  if (!node || !node.children) return;
+  for (const ch of node.children) {
+    if (ch.children) {
+      collectPsdLayers(ch, out);
+      continue;
+    }
+    if (ch.text && typeof ch.text.text === 'string' && ch.text.text.trim()) {
+      out.push(psdTextSpec(ch));
+      continue;
+    }
+    if (!ch.canvas) continue;
+    out.push({
+      name: ch.name || 'Calque',
+      canvas: ch.canvas,
+      x: Math.round(ch.left || 0),
+      y: Math.round(ch.top || 0),
+      opacity: typeof ch.opacity === 'number' ? ch.opacity : 1,
+      blend: PSD_BLEND[ch.blendMode] || 'normal',
+      visible: !ch.hidden,
+    });
+  }
+}
+
+function canvasHasInk(canvas) {
+  const s = document.createElement('canvas');
+  s.width = 8;
+  s.height = 8;
+  const ctx = s.getContext('2d');
+  ctx.drawImage(canvas, 0, 0, 8, 8);
+  const d = ctx.getImageData(0, 0, 8, 8).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true;
+  return false;
+}
+
+/** Rendu aplati : le composite embarqué s'il existe, sinon l'empilement
+    des calques. */
+function psdComposite(psd) {
+  if (psd.canvas && canvasHasInk(psd.canvas)) return psd.canvas;
+  const canvas = document.createElement('canvas');
+  canvas.width = psd.width;
+  canvas.height = psd.height;
+  const ctx = canvas.getContext('2d');
+  const layers = [];
+  collectPsdLayers(psd, layers);
+  for (const l of layers) {
+    if (!l.visible || !l.canvas) continue;
+    ctx.globalAlpha = l.opacity;
+    ctx.drawImage(l.canvas, l.x, l.y);
+  }
+  ctx.globalAlpha = 1;
+  return canvas;
+}
+
+let psdShowToken = 0;
+
+/** Affiche un .psd dans la visionneuse (composite décodé, mis en cache). */
+async function showPsd(file) {
+  const token = ++psdShowToken;
+  try {
+    if (!file.psdUrl) {
+      const psd = await decodePsdFile(file);
+      if (!psd) throw new Error('psd illisible');
+      const blob = await new Promise((res) => psdComposite(psd).toBlob(res, 'image/png'));
+      if (!blob) throw new Error('rendu impossible');
+      file.psdUrl = URL.createObjectURL(blob);
+    }
+    if (token === psdShowToken && currentFile() === file) image.src = file.psdUrl;
+  } catch {
+    if (token === psdShowToken && currentFile() === file) {
+      image.dispatchEvent(new Event('error'));
+    }
+  }
+}
 
 /* ---------- Édition sur disque (rotation, rognage) ----------
    Les modifications sont appliquées aux pixels du fichier lui-même :
@@ -462,6 +785,14 @@ function encodeTarget(srcExt) {
 }
 
 async function decodeCurrentFile(file) {
+  if (isPsdFile(file)) {
+    // PSD : décodage via ag-psd, l'édition part du composite aplati
+    const psd = await decodePsdFile(file);
+    if (!psd) return null;
+    const blob = await new Promise((res) => psdComposite(psd).toBlob(res, 'image/png'));
+    if (!blob) return null;
+    return loadImageFromBlob(blob);
+  }
   const data = await window.viewer.readFile(file.path);
   if (!data) return null;
   const srcExt = extOf(file.name);
@@ -481,6 +812,38 @@ async function saveCanvasInPlace(canvas, file) {
   });
 }
 
+/* Enregistrement depuis les éditeurs (Paint, Studio) : l'utilisateur choisit
+   entre écraser le fichier d'origine et créer une copie à côté. La copie
+   s'ouvre ensuite dans la visionneuse. */
+async function saveEditedCanvas(canvas, file) {
+  if (!file || !file.path) {
+    // document créé depuis l'accueil (sans fichier) : « Enregistrer sous »
+    // en PNG, puis on ouvre le fichier créé dans la visionneuse
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) return false;
+    const saved = await window.viewer.exportImage({
+      suggestedName: `${(file && file.name) || 'projet'}.png`,
+      data: new Uint8Array(await blob.arrayBuffer()),
+    });
+    if (saved) loadContext(await window.viewer.reloadContext(saved));
+    return Boolean(saved);
+  }
+  const mode = await window.viewer.askSaveMode(file.name);
+  if (!mode) return false; // annulé : l'éditeur reste ouvert
+  const target = encodeTarget(extOf(file.name));
+  const outBlob = await new Promise((resolve) => canvas.toBlob(resolve, target.mime, 0.95));
+  if (!outBlob) return false;
+  const payload = {
+    sourcePath: file.path,
+    outExt: target.outExt,
+    data: new Uint8Array(await outBlob.arrayBuffer()),
+  };
+  const savedPath =
+    mode === 'copy' ? await window.viewer.saveCopy(payload) : await window.viewer.saveInPlace(payload);
+  if (savedPath) await refreshAfterSave(savedPath, file);
+  return Boolean(savedPath);
+}
+
 /* Recharge l'image et sa miniature après une édition sur disque. */
 async function refreshAfterSave(savedPath, file) {
   if (!savedPath) return;
@@ -488,8 +851,7 @@ async function refreshAfterSave(savedPath, file) {
     const busted = `${file.url.split('?')[0]}?t=${Date.now()}`;
     file.url = busted;
     image.src = busted;
-    const thumbImg = filmstrip.querySelector(`.thumb[data-index="${state.index}"] img`);
-    if (thumbImg) thumbImg.src = busted;
+    refreshThumbAt(state.index, file);
     refreshFileStat(file);
   } else {
     // Le fichier a changé de nom (conversion PNG) : on reconstruit le contexte.
@@ -779,12 +1141,8 @@ btnRotate.addEventListener('click', () => rotate(1));
 /* ---------- Paint : annotation de l'image courante ---------- */
 
 Paint.init({
-  // Aplatit image + annotations dans le fichier, comme les autres éditions.
-  onSave: async (canvas, file) => {
-    const savedPath = await saveCanvasInPlace(canvas, file);
-    if (savedPath) await refreshAfterSave(savedPath, file);
-    return Boolean(savedPath);
-  },
+  // Aplatit image + annotations : écraser l'original ou créer une copie.
+  onSave: saveEditedCanvas,
   onClose: () => {},
 });
 
@@ -828,12 +1186,9 @@ function ensureStudioLoaded() {
       await loadScript('studio/tools.js');
       await loadScript('studio/studio.js');
       window.Studio.init({
-        onSave: async (canvas, file) => {
-          const savedPath = await saveCanvasInPlace(canvas, file);
-          if (savedPath) await refreshAfterSave(savedPath, file);
-          return Boolean(savedPath);
-        },
+        onSave: saveEditedCanvas,
         onClose: () => {},
+        ensurePsd: () => ensurePsdLoaded(),
       });
     })().catch((err) => {
       studioLoading = null;
@@ -848,10 +1203,183 @@ btnStudio.addEventListener('click', async () => {
   if (!file || image.hidden || editBusy || Paint.isOpen() || studioIsOpen()) return;
   if (cropMode) exitCrop();
   await ensureStudioLoaded();
+  if (isPsdFile(file)) {
+    // PSD : le document s'ouvre avec ses calques séparés
+    const psd = await decodePsdFile(file);
+    if (!psd) return;
+    const layers = [];
+    collectPsdLayers(psd, layers);
+    window.Studio.open({ file, layers, width: psd.width, height: psd.height });
+    return;
+  }
   const decoded = await decodeCurrentFile(file);
   if (!decoded) return;
   window.Studio.open({ file, img: decoded.img, url: decoded.url });
 });
+
+/* ---------- Accueil : nouveau projet, nouveau dessin, ouvrir un projet ---------- */
+
+const homeOpen = document.getElementById('home-open');
+const homePaint = document.getElementById('home-paint');
+const homeStudio = document.getElementById('home-studio');
+const homeProject = document.getElementById('home-project');
+const npBackdrop = document.getElementById('newproj-backdrop');
+const npName = document.getElementById('np-name');
+const npTemplates = document.getElementById('np-templates');
+const npW = document.getElementById('np-w');
+const npH = document.getElementById('np-h');
+const npDpi = document.getElementById('np-dpi');
+const npBg = document.getElementById('np-bg');
+const npBgColor = document.getElementById('np-bg-color');
+const npMode = document.getElementById('np-mode');
+const npNote = document.getElementById('np-note');
+
+const NP_TEMPLATES = [
+  { name: 'Full HD', sub: '1920 × 1080 · 16:9', w: 1920, h: 1080 },
+  { name: 'Carré', sub: '1080 × 1080 · 1:1', w: 1080, h: 1080 },
+  { name: 'Portrait', sub: '1080 × 1350 · 4:5', w: 1080, h: 1350 },
+  { name: 'Story', sub: '1080 × 1920 · 9:16', w: 1080, h: 1920 },
+  { name: '4K', sub: '3840 × 2160 · 16:9', w: 3840, h: 2160 },
+  { name: 'A4', sub: '2480 × 3508 · 300 DPI', w: 2480, h: 3508, dpi: 300 },
+  { name: 'A4 paysage', sub: '3508 × 2480 · 300 DPI', w: 3508, h: 2480, dpi: 300 },
+  { name: 'Bannière', sub: '1500 × 500 · 3:1', w: 1500, h: 500 },
+];
+
+for (const t of NP_TEMPLATES) {
+  const b = document.createElement('button');
+  b.className = 'np-template';
+  b.title = `${t.name} — ${t.sub}`;
+  const ratio = document.createElement('span');
+  ratio.className = 'np-template-ratio';
+  const k = Math.min(34 / t.w, 24 / t.h);
+  ratio.style.width = `${Math.max(8, Math.round(t.w * k))}px`;
+  ratio.style.height = `${Math.max(8, Math.round(t.h * k))}px`;
+  const nm = document.createElement('span');
+  nm.className = 'np-template-name';
+  nm.textContent = t.name;
+  const sub = document.createElement('span');
+  sub.className = 'np-template-sub';
+  sub.textContent = t.sub;
+  b.append(ratio, nm, sub);
+  b.addEventListener('click', () => {
+    npW.value = String(t.w);
+    npH.value = String(t.h);
+    npDpi.value = String(t.dpi || 72);
+    for (const o of npTemplates.children) o.classList.toggle('is-selected', o === b);
+  });
+  npTemplates.appendChild(b);
+}
+for (const inp of [npW, npH]) {
+  inp.addEventListener('input', () => {
+    for (const o of npTemplates.children) o.classList.remove('is-selected');
+  });
+}
+
+npBg.addEventListener('change', () => {
+  npBgColor.hidden = npBg.value !== 'custom';
+});
+npMode.addEventListener('change', () => {
+  npNote.hidden = npMode.value !== 'cmyk';
+});
+
+homeOpen.addEventListener('click', () => btnOpen.click());
+
+homeStudio.addEventListener('click', () => {
+  npBackdrop.hidden = false;
+  npName.focus();
+  npName.select();
+});
+document.getElementById('np-cancel').addEventListener('click', () => {
+  npBackdrop.hidden = true;
+});
+npBackdrop.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') npBackdrop.hidden = true;
+  e.stopPropagation();
+});
+
+document.getElementById('np-create').addEventListener('click', async () => {
+  const width = Math.max(1, Math.min(20000, Math.round(Number(npW.value) || 0)));
+  const height = Math.max(1, Math.min(20000, Math.round(Number(npH.value) || 0)));
+  if (!width || !height) return;
+  const background =
+    npBg.value === 'transparent' ? null : npBg.value === 'custom' ? npBgColor.value : npBg.value;
+  npBackdrop.hidden = true;
+  await ensureStudioLoaded();
+  window.Studio.open({
+    file: { name: npName.value.trim() || 'Sans titre', path: null, url: null },
+    blank: {
+      width,
+      height,
+      background,
+      dpi: Math.max(18, Math.min(1200, Math.round(Number(npDpi.value) || 72))),
+      mode: npMode.value,
+    },
+  });
+});
+
+homePaint.addEventListener('click', () => {
+  if (Paint.isOpen() || studioIsOpen()) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1600;
+  canvas.height = 1000;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  canvas.toBlob(async (blob) => {
+    if (!blob) return;
+    const decoded = await loadImageFromBlob(blob);
+    Paint.open({ file: { name: 'Nouveau dessin', path: null, url: null }, img: decoded.img, url: decoded.url });
+  }, 'image/png');
+});
+
+homeProject.addEventListener('click', async () => {
+  if (Paint.isOpen() || studioIsOpen()) return;
+  await ensureStudioLoaded();
+  await window.Studio.openProjectFromHome();
+});
+
+/* ---------- Mode Basic / Pro (persisté) ----------
+   Basic : la visionneuse épurée. Pro : panneau d'analyse (histogramme,
+   inspecteur de pixels, canaux, métadonnées EXIF, notes/drapeaux, tri,
+   comparaison, mesure, grille) — module chargé à la demande. */
+
+const modeBasicBtn = document.getElementById('mode-basic');
+const modeProBtn = document.getElementById('mode-pro');
+let proLoading = null;
+
+function ensureProLoaded() {
+  if (!proLoading) {
+    proLoading = (async () => {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'pro.css';
+      document.head.appendChild(link);
+      await loadScript('pro.js');
+    })().catch((err) => {
+      proLoading = null;
+      throw err;
+    });
+  }
+  return proLoading;
+}
+
+async function setViewerMode(mode, persist = true) {
+  if (persist) localStorage.setItem('viewerMode', mode);
+  modeBasicBtn.classList.toggle('is-active', mode !== 'pro');
+  modeProBtn.classList.toggle('is-active', mode === 'pro');
+  if (mode === 'pro') {
+    await ensureProLoaded();
+    document.body.classList.add('pro');
+    window.Pro.enable();
+  } else {
+    document.body.classList.remove('pro');
+    if (window.Pro) window.Pro.disable();
+  }
+}
+
+modeBasicBtn.addEventListener('click', () => setViewerMode('basic'));
+modeProBtn.addEventListener('click', () => setViewerMode('pro'));
+setViewerMode(localStorage.getItem('viewerMode') || 'basic', false);
 
 image.addEventListener('dblclick', (e) => {
   if (cropMode) return;
@@ -905,6 +1433,18 @@ window.addEventListener('keydown', (e) => {
   if (cropMode) {
     if (e.key === 'Escape') exitCrop();
     if (e.key === 'Enter') applyCrop();
+    return;
+  }
+  // mode Pro : notes (1-5, 0), drapeaux (P/X/U), grille (G), verrou (K), mesure (M)
+  if (
+    window.Pro &&
+    window.Pro.active() &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    window.Pro.handleKey(e)
+  ) {
+    e.preventDefault();
     return;
   }
   if (e.ctrlKey && e.key.toLowerCase() === 'o') {
