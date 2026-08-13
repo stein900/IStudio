@@ -190,6 +190,8 @@ function render() {
   fileNameEl.textContent = file.name;
   window.viewer.setTitle(`${file.name} — IStudio`);
 
+  // priorité réseau/décodage à l'image principale : vignettes en pause
+  if (image.src !== file.url || image.hidden) holdThumbs();
   if (isPsdFile(file)) {
     showPsd(file);
   } else {
@@ -206,6 +208,10 @@ image.addEventListener('load', () => {
     setFit();
   }
   updateFileMeta();
+  // l'image principale est là : les vignettes peuvent reprendre, et les
+  // voisines se préchargent pour une navigation instantanée
+  releaseThumbs();
+  schedulePreload();
 });
 
 image.addEventListener('error', () => {
@@ -215,7 +221,36 @@ image.addEventListener('error', () => {
   errorState.hidden = false;
   errorName.textContent = file.name;
   updateFileMeta();
+  releaseThumbs();
 });
+
+/* ---------- Préchargement des images voisines ----------
+   Après un court répit (l'affichage et les vignettes d'abord), les images
+   précédente et suivante sont demandées : le cache réseau de Chromium les
+   garde prêtes, et flèche gauche/droite devient quasi instantané — même
+   sur un dossier NAS avec des photos de 25 Mpx. */
+
+let preloadTimer = null;
+let preloadImgs = []; // référence vive : garde les octets en cache
+
+function schedulePreload() {
+  if (preloadTimer) clearTimeout(preloadTimer);
+  preloadTimer = setTimeout(() => {
+    preloadTimer = null;
+    preloadImgs = [];
+    const n = state.files.length;
+    if (n < 2) return;
+    for (const off of [1, -1]) {
+      const f = state.files[(((state.index + off) % n) + n) % n];
+      if (!f || isPsdFile(f)) continue;
+      if (preloadImgs.some((im) => im.src === f.url)) continue;
+      const im = new Image();
+      im.decoding = 'async';
+      im.src = f.url;
+      preloadImgs.push(im);
+    }
+  }, 300);
+}
 
 /* ---------- Miniatures ---------- */
 
@@ -250,12 +285,50 @@ let thumbMoreBtn = null;
    3. dernier recours : le fichier lui-même (SVG et formats légers).
    Le tout piloté par un IntersectionObserver + file d'attente bornée. */
 
-const THUMB_PARALLEL = 4;
 const thumbQueue = [];
 let thumbActive = 0;
 
+/* Dossier distant (UNC \\serveur\…) : la bande passante est précieuse,
+   on réduit le parallélisme des vignettes pour ne pas étouffer le
+   chargement de l'image principale. */
+function contextIsRemote() {
+  const f = state.files[0];
+  return Boolean(f && (f.path.startsWith('\\\\') || f.path.startsWith('//')));
+}
+
+function thumbParallel() {
+  // réseau : UNE seule vignette à la fois — un fichier de 30 Mo en vol ne
+  // peut pas être annulé, il ne doit jamais y en avoir deux qui bloquent
+  // la navigation
+  return contextIsRemote() ? 1 : 4;
+}
+
+/* Les vignettes attendent que l'image principale soit RÉELLEMENT affichée
+   (événement load/error) : elle a la priorité absolue sur le réseau et le
+   décodage. Le garde-fou de 20 s ne sert qu'aux cas dégénérés. */
+let thumbGate = false;
+let thumbGateTimer = null;
+
+function holdThumbs() {
+  if (thumbGateTimer) clearTimeout(thumbGateTimer);
+  thumbGate = true;
+  thumbGateTimer = setTimeout(releaseThumbs, 20000);
+}
+
+function releaseThumbs() {
+  if (thumbGateTimer) {
+    clearTimeout(thumbGateTimer);
+    thumbGateTimer = null;
+  }
+  if (thumbGate) {
+    thumbGate = false;
+    pumpThumbs();
+  }
+}
+
 function pumpThumbs() {
-  while (thumbActive < THUMB_PARALLEL && thumbQueue.length) {
+  if (thumbGate) return;
+  while (thumbActive < thumbParallel() && thumbQueue.length) {
     const job = thumbQueue.shift();
     thumbActive += 1;
     job().finally(() => {
@@ -270,20 +343,53 @@ function queueThumb(job) {
   pumpThumbs();
 }
 
-/** Décodage réduit côté renderer (secours si Windows n'a pas de vignette). */
+/* ---------- Worker de vignettes ----------
+   Le décodage d'une photo de 25 Mpx pour en tirer une miniature se fait
+   dans un Web Worker : le thread d'interface ne décode JAMAIS pour le
+   bandeau — fini les gels pendant que le carrousel se remplit. */
+
+let thumbWorker = null;
+let thumbWorkerSeq = 0;
+const thumbWorkerPending = new Map();
+
+function decodeThumbInWorker(data, type) {
+  if (!thumbWorker) {
+    thumbWorker = new Worker('thumb-worker.js');
+    thumbWorker.onmessage = (e) => {
+      const resolve = thumbWorkerPending.get(e.data.id);
+      if (!resolve) return;
+      thumbWorkerPending.delete(e.data.id);
+      resolve(e.data.ok ? e.data.jpeg : null);
+    };
+  }
+  return new Promise((resolve) => {
+    const id = ++thumbWorkerSeq;
+    thumbWorkerPending.set(id, resolve);
+    // transfert sans copie quand le tampon est exact
+    const buf =
+      data.byteOffset === 0 && data.byteLength === data.buffer.byteLength
+        ? data.buffer
+        : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    thumbWorker.postMessage({ id, buf, type }, [buf]);
+  });
+}
+
+/** Décodage réduit (secours si Windows n'a pas de vignette) — dans le
+    worker. La vignette produite est renvoyée au cache disque de
+    l'application : la prochaine visite du dossier ne relira pas le fichier. */
 async function thumbFromDecode(file) {
   try {
     const data = await window.viewer.readFile(file.path);
     if (!data) return null;
-    const blob = new Blob([data], { type: MIME_BY_EXT[extOf(file.name)] || 'application/octet-stream' });
-    const bmp = await createImageBitmap(blob, { resizeWidth: 256, resizeQuality: 'low' });
-    const canvas = document.createElement('canvas');
-    canvas.width = bmp.width;
-    canvas.height = bmp.height;
-    canvas.getContext('2d').drawImage(bmp, 0, 0);
-    bmp.close();
-    const out = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
-    return out ? URL.createObjectURL(out) : null;
+    const jpeg = await decodeThumbInWorker(
+      data,
+      MIME_BY_EXT[extOf(file.name)] || 'application/octet-stream'
+    );
+    if (!jpeg) return null;
+    window.viewer
+      .storeThumbnail({ filePath: file.path, data: new Uint8Array(jpeg) })
+      .catch(() => {});
+    return URL.createObjectURL(new Blob([jpeg], { type: 'image/jpeg' }));
   } catch {
     return null;
   }
@@ -294,7 +400,12 @@ async function loadThumb(btn, file) {
   btn.dataset.loaded = '1';
   let url = file.thumbUrl || null;
   if (!url) {
-    const data = await window.viewer.fileThumbnail(file.path);
+    // Dossier réseau : jamais d'extraction shell (elle rapatrierait le
+    // fichier entier dans le processus principal, qui route aussi les
+    // entrées souris/clavier) — cache disque, sinon worker de décodage.
+    const data = contextIsRemote()
+      ? await window.viewer.fileThumbnailCached(file.path)
+      : await window.viewer.fileThumbnail(file.path);
     if (data && data.byteLength) {
       url = URL.createObjectURL(new Blob([data], { type: 'image/jpeg' }));
     } else if (!isPsdFile(file)) {
@@ -1115,12 +1226,44 @@ btnPrint.addEventListener('click', () => {
   if (file) window.viewer.printFile(file.url);
 });
 
+/* ---------- Thème clair / sombre (persisté) ---------- */
+
+const btnTheme = document.getElementById('btn-theme');
+
+function applyTheme(theme) {
+  document.body.classList.toggle('light', theme === 'light');
+  btnTheme.title = theme === 'light'
+    ? 'Passer au thème sombre (T)'
+    : 'Passer au thème clair (T)';
+  // les canvas du mode Pro (histogramme, profil) se redessinent avec le thème
+  if (window.Pro && window.Pro.active()) window.Pro.onTheme();
+}
+
+function toggleTheme() {
+  const next = document.body.classList.contains('light') ? 'dark' : 'light';
+  localStorage.setItem('theme', next);
+  applyTheme(next);
+}
+
+btnTheme.addEventListener('click', toggleTheme);
+applyTheme(localStorage.getItem('theme') || 'dark');
+
 /* ---------- Contrôles ---------- */
 
 btnOpen.addEventListener('click', async () => {
   const ctx = await window.viewer.pickFile();
   if (ctx) loadContext(ctx);
 });
+
+/* Accueil : referme le dossier courant et revient à l'écran de départ. */
+const btnHome = document.getElementById('btn-home');
+
+function goHome() {
+  if (cropMode) exitCrop();
+  loadContext({ files: [], index: -1 });
+}
+
+btnHome.addEventListener('click', goHome);
 
 btnPrev.addEventListener('click', prev);
 btnNext.addEventListener('click', next);
@@ -1426,6 +1569,14 @@ window.addEventListener('mouseup', () => {
 
 window.addEventListener('keydown', (e) => {
   if (Paint.isOpen() || studioIsOpen()) return; // ces modules gèrent leur clavier
+  // saisie en cours (champ, liste déroulante) : aucun raccourci global
+  if (
+    e.target instanceof HTMLInputElement ||
+    e.target instanceof HTMLTextAreaElement ||
+    e.target instanceof HTMLSelectElement
+  ) {
+    return;
+  }
   if (!infoOverlay.hidden) {
     if (e.key === 'Escape' || e.key.toLowerCase() === 'i') hideInfo();
     return;
@@ -1490,6 +1641,10 @@ window.addEventListener('keydown', (e) => {
     case 'i':
     case 'I':
       if (currentFile()) showInfo();
+      break;
+    case 't':
+    case 'T':
+      toggleTheme();
       break;
     case 'Delete':
       deleteCurrent();

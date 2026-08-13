@@ -16,6 +16,12 @@
         </svg>
         <span>Ouvrir</span>
       </button>
+      <button id="btn-home" class="icon-btn" title="Accueil — revenir à l'écran de départ">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m3 10.5 9-7.5 9 7.5" />
+          <path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5" />
+        </svg>
+      </button>
       <span class="toolbar-sep" aria-hidden="true"></span>
       <button id="btn-prev" class="icon-btn" title="Image précédente (←)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -139,6 +145,15 @@
           <line x1="16.5" y1="14.5" x2="21" y2="14.5" />
         </svg>
       </button>
+      <button id="btn-theme" class="icon-btn" title="Basculer thème clair / sombre (T)">
+        <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+        </svg>
+        <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2" />
+          <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.1 5.1l1.6 1.6M17.3 17.3l1.6 1.6M5.1 18.9l1.6-1.6M17.3 6.7l1.6-1.6" />
+        </svg>
+      </button>
       <button id="btn-fullscreen" class="icon-btn" title="Plein écran (F)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polyline points="15 3 21 3 21 9" />
@@ -234,7 +249,7 @@
         </div>
       </div>
     </div>
-    <img id="image" alt="" draggable="false" hidden />
+    <img id="image" alt="" draggable="false" decoding="async" hidden />
     <div id="error-state" hidden>
       <svg class="state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="m10.29 3.86-8.2 14.14A1.86 1.86 0 0 0 3.7 21h16.6a1.86 1.86 0 0 0 1.61-2.99L13.71 3.86a1.86 1.86 0 0 0-3.42 0z" />
@@ -341,6 +356,11 @@
         <input id="paint-smoothing" type="range" min="0" max="100" value="60" />
       </label>
       <div class="toolbar-group paint-toolrow-right">
+        <button id="paint-zoom-out" class="paint-tb" data-icon="zoomOut" title="Zoom arrière (- ou molette)"></button>
+        <span id="paint-zoom-label" title="Niveau de zoom">100 %</span>
+        <button id="paint-zoom-in" class="paint-tb" data-icon="zoomIn" title="Zoom avant (+ ou molette)"></button>
+        <button id="paint-zoom-fit" class="paint-tb" data-icon="fit" title="Ajuster à la fenêtre (0)"></button>
+        <span class="toolbar-sep" aria-hidden="true"></span>
         <button id="paint-grid" class="paint-tb" data-icon="grid" title="Grille de points (repère visuel, absente de l'enregistrement)"></button>
         <button id="paint-layers-toggle" class="paint-tb" data-icon="layers" title="Panneau des calques"></button>
       </div>
@@ -363,7 +383,7 @@
 
     <footer id="paint-statusbar">
       <span id="paint-status-counts"></span>
-      <span id="paint-status-hint">Une forme posée reste active (poignées) et s'ancre au tracé suivant ou avec Échap · la gomme n'agit que sur le calque actif · Maj = régulier · double-clic = éditer un texte</span>
+      <span id="paint-status-hint">Molette = zoom · clic-molette = déplacer la vue · une forme posée reste active (poignées) et s'ancre au tracé suivant ou avec Échap · la gomme n'agit que sur le calque actif · Maj = régulier</span>
       <span id="paint-status-layer"></span>
     </footer>
   </div>
