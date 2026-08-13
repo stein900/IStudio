@@ -101,16 +101,16 @@ window.Pro = (() => {
         <div id="pro-measure-info" class="pro-mini">Glisser sur l'image pour mesurer un segment.</div>
         <canvas id="pro-profile" width="264" height="80"></canvas>
       </div>
-      <div class="pro-sec pro-row">
-        <span class="pro-label">Grille</span>
-        <button id="pro-grid" class="pro-btn">Afficher (G)</button>
-        <input id="pro-grid-step" type="number" min="2" max="2000" value="100" title="Pas de la grille en pixels image" />
-        <span class="pro-mini">px</span>
+      <div class="pro-sec">
+        <span class="pro-label">Image</span>
+        <div id="pro-info" class="pro-grid2"></div>
       </div>
-      <div class="pro-sec pro-row">
+      <div class="pro-sec pro-row pro-row-tight">
         <span class="pro-label">Vue</span>
+        <button id="pro-grid" class="pro-btn" title="Grille en pixels image (G)">Grille</button>
+        <input id="pro-grid-step" type="number" min="2" max="2000" value="100" title="Pas de la grille, en pixels image" />
         <button id="pro-100" class="pro-btn" title="Zoom 100 % : 1 pixel image = 1 pixel écran">1:1</button>
-        <button id="pro-lock" class="pro-btn" title="Conserver zoom et position en changeant d'image — pour inspecter la même zone sur tout le dataset (K)">Verrou (K)</button>
+        <button id="pro-lock" class="pro-btn" title="Conserver zoom et position en changeant d'image — pour inspecter la même zone sur tout le dataset (K)">Verrou</button>
       </div>
       <div class="pro-sec">
         <div class="pro-row"><span class="pro-label">Note</span><div id="pro-stars"></div></div>
@@ -150,10 +150,6 @@ window.Pro = (() => {
           <button id="pro-cmp-diff" class="pro-btn">Différence</button>
         </div>
         <div class="pro-mini">A et B se choisissent dans la barre au-dessus de l'aperçu (listes déroulantes, bouton d'échange). Raccourci : Ctrl + clic sur une vignette pour l'image B. Les flèches changent l'image A.</div>
-      </div>
-      <div class="pro-sec">
-        <span class="pro-label">Image</span>
-        <div id="pro-info" class="pro-grid2"></div>
       </div>
       <div class="pro-sec">
         <span class="pro-label">EXIF</span>

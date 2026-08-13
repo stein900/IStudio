@@ -19,6 +19,7 @@ const btnZoomOut = document.getElementById('btn-zoom-out');
 const btnFit = document.getElementById('btn-fit');
 const btnRotate = document.getElementById('btn-rotate');
 const btnCrop = document.getElementById('btn-crop');
+const btnUpscale = document.getElementById('btn-upscale');
 const btnPaint = document.getElementById('btn-paint');
 const btnStudio = document.getElementById('btn-studio');
 const btnInfo = document.getElementById('btn-info');
@@ -164,6 +165,11 @@ function render() {
   const file = currentFile();
   const hasFile = Boolean(file);
 
+  // accueil épuré : la barre ne montre que l'essentiel sans image ouverte
+  document.body.classList.toggle('at-home', !hasFile);
+  syncActiveTab();
+  renderTabs();
+
   emptyState.hidden = hasFile;
   errorState.hidden = true;
   image.hidden = !hasFile;
@@ -172,8 +178,21 @@ function render() {
   const disable = !hasFile;
   btnPrev.disabled = disable || state.files.length < 2;
   btnNext.disabled = disable || state.files.length < 2;
-  for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnPaint, btnStudio, btnInfo, btnPrint, btnDelete]) {
+  for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnUpscale, btnPaint, btnStudio, btnInfo, btnPrint, btnDelete, btnGallery]) {
     b.disabled = disable;
+  }
+
+  // la galerie suit l'état du dossier : reconstruction seulement si la
+  // liste a changé (suppression, onglet, tri Pro) — une simple navigation
+  // ne fait que déplacer le surlignage
+  if (galleryOpen) {
+    if (!hasFile) {
+      closeGallery();
+    } else if (galleryFilesRef !== state.files || galleryTotal !== state.files.length) {
+      rebuildGallery();
+    } else {
+      refreshGalleryCurrent();
+    }
   }
 
   if (!hasFile) {
@@ -203,8 +222,17 @@ function render() {
 }
 
 image.addEventListener('load', () => {
-  // le mode Pro peut conserver la vue (verrou zoom/pan, bascule de canal)
-  if (!(window.Pro && window.Pro.active() && window.Pro.onImageElementLoad())) {
+  // retour sur un onglet : sa vue (zoom/position) est restaurée telle quelle
+  const v = pendingTabView;
+  pendingTabView = null;
+  if (v && currentFile() && v.path === currentFile().path && !v.fit) {
+    state.zoom = v.zoom;
+    state.panX = v.panX;
+    state.panY = v.panY;
+    state.fit = false;
+    applyTransform();
+  } else if (!(window.Pro && window.Pro.active() && window.Pro.onImageElementLoad())) {
+    // le mode Pro peut conserver la vue (verrou zoom/pan, bascule de canal)
     setFit();
   }
   updateFileMeta();
@@ -212,9 +240,15 @@ image.addEventListener('load', () => {
   // voisines se préchargent pour une navigation instantanée
   releaseThumbs();
   schedulePreload();
+  // arrivée depuis la carte « Agrandir avec l'IA » de l'accueil
+  if (pendingUpscaleOpen) {
+    pendingUpscaleOpen = false;
+    openUpscale();
+  }
 });
 
 image.addEventListener('error', () => {
+  pendingUpscaleOpen = false; // image illisible : pas d'upscale automatique
   const file = currentFile();
   if (!file) return;
   image.hidden = true;
@@ -395,25 +429,31 @@ async function thumbFromDecode(file) {
   }
 }
 
+/** Miniature d'un fichier (URL prête pour un <img>), partagée entre le
+    bandeau et la galerie Global — mise en cache sur l'objet fichier. */
+async function ensureThumbUrl(file) {
+  if (file.thumbUrl) return file.thumbUrl;
+  // Dossier réseau : jamais d'extraction shell (elle rapatrierait le
+  // fichier entier dans le processus principal, qui route aussi les
+  // entrées souris/clavier) — cache disque, sinon worker de décodage.
+  const data = contextIsRemote()
+    ? await window.viewer.fileThumbnailCached(file.path)
+    : await window.viewer.fileThumbnail(file.path);
+  let url = null;
+  if (data && data.byteLength) {
+    url = URL.createObjectURL(new Blob([data], { type: 'image/jpeg' }));
+  } else if (!isPsdFile(file)) {
+    url = await thumbFromDecode(file);
+    if (!url) url = file.url; // SVG et cas limites : décodage direct
+  }
+  file.thumbUrl = url;
+  return url;
+}
+
 async function loadThumb(btn, file) {
   if (btn.dataset.loaded) return;
   btn.dataset.loaded = '1';
-  let url = file.thumbUrl || null;
-  if (!url) {
-    // Dossier réseau : jamais d'extraction shell (elle rapatrierait le
-    // fichier entier dans le processus principal, qui route aussi les
-    // entrées souris/clavier) — cache disque, sinon worker de décodage.
-    const data = contextIsRemote()
-      ? await window.viewer.fileThumbnailCached(file.path)
-      : await window.viewer.fileThumbnail(file.path);
-    if (data && data.byteLength) {
-      url = URL.createObjectURL(new Blob([data], { type: 'image/jpeg' }));
-    } else if (!isPsdFile(file)) {
-      url = await thumbFromDecode(file);
-      if (!url) url = file.url; // SVG et cas limites : décodage direct
-    }
-    file.thumbUrl = url;
-  }
+  const url = await ensureThumbUrl(file);
   if (!url) return; // PSD sans vignette système : la pastille reste
   const img = document.createElement('img');
   img.alt = file.name;
@@ -573,6 +613,333 @@ filmstrip.addEventListener(
 stripToggle.addEventListener('click', () => setFilmstripVisible(!filmstripVisible));
 btnFilm.addEventListener('click', () => setFilmstripVisible(!filmstripVisible));
 
+/* ---------- Galerie « Global » ----------
+   Vue d'ensemble du dossier courant : grille de miniatures (mêmes caches
+   et même worker que le bandeau), recherche, tri (nom, date, taille,
+   type), ordre et filtre par format. Clic : afficher l'image.
+   Flèches / Entrée : naviguer dedans. Ctrl+G ou Échap : ouvrir/fermer. */
+
+const galleryEl = document.getElementById('gallery');
+const galleryGrid = document.getElementById('gallery-grid');
+const gallerySearch = document.getElementById('gallery-search');
+const gallerySort = document.getElementById('gallery-sort');
+const galleryDir = document.getElementById('gallery-dir');
+const galleryFormat = document.getElementById('gallery-format');
+const galleryCountEl = document.getElementById('gallery-count');
+const btnGallery = document.getElementById('btn-gallery');
+
+let galleryOpen = false;
+let galleryAsc = true;
+let galleryList = []; // entrées affichées : { f, i } (i = index dans state.files)
+let galleryCursor = -1;
+let galleryShown = 0; // nombre de tuiles réellement présentes dans le DOM
+let gallerySentinel = null;
+let galleryFilesRef = null; // détecte un changement de dossier / de liste
+let galleryTotal = 0;
+
+/* Pagination paresseuse : les tuiles n'existent dans le DOM que par blocs
+   de 200, le bloc suivant n'est créé qu'à l'approche du bas — un dossier
+   de plusieurs milliers d'images reste léger, même sur un PC modeste. */
+const GALLERY_PAGE = 200;
+
+/* Vignette ET métadonnées ne sont chargées que quand la tuile approche de
+   la zone visible. */
+const galleryObserver = new IntersectionObserver(
+  (entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      galleryObserver.unobserve(e.target);
+      const file = state.files[Number(e.target.dataset.index)];
+      if (file) queueThumb(() => loadGalleryThumb(e.target, file));
+    }
+  },
+  { root: galleryGrid, rootMargin: '400px' }
+);
+
+const gallerySentinelObserver = new IntersectionObserver(
+  (entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      gallerySentinelObserver.unobserve(e.target);
+      appendGalleryTiles(galleryShown + GALLERY_PAGE);
+    }
+  },
+  { root: galleryGrid, rootMargin: '800px' }
+);
+
+function galleryMetaLabel(f) {
+  const parts = [];
+  if (f.size) parts.push(formatBytes(f.size));
+  if (f.mtime) parts.push(galleryDateLabel(f.mtime));
+  return parts.join(' · ');
+}
+
+function updateGalleryMeta(tile, file) {
+  const meta = tile.querySelector('.gtile-meta');
+  if (meta) meta.textContent = galleryMetaLabel(file) || ' ';
+}
+
+async function loadGalleryThumb(tile, file) {
+  if (tile.dataset.loaded) return;
+  tile.dataset.loaded = '1';
+  // stat unitaire, uniquement pour les tuiles devenues visibles — le
+  // libellé taille · date se remplit dès que l'info arrive
+  if (file.mtime === undefined) {
+    window.viewer
+      .fileInfo(file.path)
+      .then((st) => {
+        file.size = st ? st.size : file.size;
+        file.mtime = st ? st.mtime : 0;
+        updateGalleryMeta(tile, file);
+      })
+      .catch(() => {});
+  }
+  const url = await ensureThumbUrl(file);
+  if (!url) return;
+  const img = document.createElement('img');
+  img.alt = file.name;
+  img.decoding = 'async';
+  img.addEventListener(
+    'load',
+    () => {
+      const ph = tile.querySelector('.thumb-ph, .thumb-psd');
+      if (ph) ph.replaceWith(img);
+    },
+    { once: true }
+  );
+  img.src = url;
+}
+
+/* Taille et date ne sont lues qu'au premier tri qui en a besoin
+   (parallélisme borné côté processus principal — NAS compris). */
+async function ensureFileStats() {
+  const files = state.files;
+  if (!files.length || files._statsLoaded) return;
+  const stats = await window.viewer.statMany(files.map((f) => f.path));
+  if (state.files !== files) return; // le contexte a changé entre-temps
+  stats.forEach((st, i) => {
+    if (st) {
+      files[i].size = st.size;
+      files[i].mtime = st.mtime;
+    }
+  });
+  files._statsLoaded = true;
+}
+
+function galleryNameCmp(a, b) {
+  return a.f.name.localeCompare(b.f.name, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function computeGalleryList() {
+  let list = state.files.map((f, i) => ({ f, i }));
+  const q = gallerySearch.value.trim().toLowerCase();
+  if (q) list = list.filter(({ f }) => f.name.toLowerCase().includes(q));
+  const fmt = galleryFormat.value;
+  if (fmt !== 'all') list = list.filter(({ f }) => extOf(f.name) === fmt);
+  const sv = gallerySort.value;
+  const dir = galleryAsc ? 1 : -1;
+  list.sort((a, b) => {
+    let r = 0;
+    if (sv === 'mtime') r = (a.f.mtime || 0) - (b.f.mtime || 0);
+    else if (sv === 'size') r = (a.f.size || 0) - (b.f.size || 0);
+    else if (sv === 'type') r = extOf(a.f.name).localeCompare(extOf(b.f.name));
+    return dir * (r || galleryNameCmp(a, b));
+  });
+  return list;
+}
+
+function buildGalleryFormats() {
+  const counts = new Map();
+  for (const f of state.files) {
+    const e = extOf(f.name) || '?';
+    counts.set(e, (counts.get(e) || 0) + 1);
+  }
+  const prev = galleryFormat.value;
+  galleryFormat.innerHTML = '';
+  const all = document.createElement('option');
+  all.value = 'all';
+  all.textContent = `Tous (${state.files.length})`;
+  galleryFormat.appendChild(all);
+  for (const [e, n] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
+    const o = document.createElement('option');
+    o.value = e;
+    o.textContent = `${e.toUpperCase()} (${n})`;
+    galleryFormat.appendChild(o);
+  }
+  galleryFormat.value = counts.has(prev) ? prev : 'all';
+}
+
+function galleryDateLabel(ms) {
+  if (!ms) return '';
+  return new Date(ms).toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+/** Fabrique une carte : miniature (ratio fixe, jamais de débordement)
+    au-dessus d'une légende nom + taille · date. */
+function makeGalleryTile(entry, pos) {
+  const { f, i } = entry;
+  const tile = document.createElement('button');
+  tile.className = 'gtile';
+  tile.dataset.index = String(i);
+  tile.dataset.pos = String(pos);
+  if (f === currentFile()) tile.classList.add('current');
+  if (pos === galleryCursor) tile.classList.add('selected');
+  tile.title = f.name;
+
+  const thumb = document.createElement('span');
+  thumb.className = 'gtile-thumb';
+  const ph = document.createElement('span');
+  if (isPsdFile(f)) {
+    ph.className = 'thumb-psd';
+    ph.textContent = 'PSD';
+  } else {
+    ph.className = 'thumb-ph';
+  }
+  thumb.appendChild(ph);
+
+  const caption = document.createElement('span');
+  caption.className = 'gtile-caption';
+  const name = document.createElement('span');
+  name.className = 'gtile-name';
+  name.textContent = f.name;
+  const meta = document.createElement('span');
+  meta.className = 'gtile-meta';
+  meta.textContent = galleryMetaLabel(f) || ' ';
+  caption.append(name, meta);
+
+  tile.append(thumb, caption);
+  tile.addEventListener('click', () => {
+    goTo(i);
+    closeGallery();
+  });
+  galleryObserver.observe(tile);
+  return tile;
+}
+
+function appendGalleryTiles(upTo) {
+  if (gallerySentinel) {
+    gallerySentinelObserver.unobserve(gallerySentinel);
+    gallerySentinel.remove();
+    gallerySentinel = null;
+  }
+  const end = Math.min(upTo, galleryList.length);
+  const frag = document.createDocumentFragment();
+  for (let pos = galleryShown; pos < end; pos += 1) {
+    frag.appendChild(makeGalleryTile(galleryList[pos], pos));
+  }
+  galleryGrid.appendChild(frag);
+  galleryShown = end;
+  if (galleryShown < galleryList.length) {
+    gallerySentinel = document.createElement('div');
+    gallerySentinel.className = 'gallery-sentinel';
+    galleryGrid.appendChild(gallerySentinel);
+    gallerySentinelObserver.observe(gallerySentinel);
+  }
+}
+
+function rebuildGallery() {
+  if (!galleryOpen) return;
+  const sv = gallerySort.value;
+  if ((sv === 'mtime' || sv === 'size') && !state.files._statsLoaded) {
+    galleryCountEl.textContent = 'Lecture des informations…';
+    ensureFileStats().then(() => rebuildGallery());
+    return;
+  }
+  galleryList = computeGalleryList();
+  galleryFilesRef = state.files;
+  galleryTotal = state.files.length;
+  galleryObserver.disconnect();
+  galleryGrid.innerHTML = '';
+  galleryShown = 0;
+  gallerySentinel = null;
+  const cur = currentFile();
+  galleryCursor = Math.max(0, galleryList.findIndex(({ f }) => f === cur));
+  // au moins la première page, étendue jusqu'à l'image courante si besoin
+  appendGalleryTiles(Math.max(GALLERY_PAGE, galleryCursor + 1));
+  galleryCountEl.textContent = `${galleryList.length} / ${state.files.length} image${
+    state.files.length > 1 ? 's' : ''
+  }`;
+}
+
+/** Mise à jour légère (navigation sans changement de liste) : seule la
+    tuile de l'image courante change — pas de reconstruction du DOM. */
+function refreshGalleryCurrent() {
+  const cur = currentFile();
+  for (const t of galleryGrid.querySelectorAll('.gtile')) {
+    t.classList.toggle('current', state.files[Number(t.dataset.index)] === cur);
+  }
+}
+
+function moveGalleryCursor(delta) {
+  if (!galleryList.length) return;
+  galleryCursor = Math.max(0, Math.min(galleryList.length - 1, galleryCursor + delta));
+  if (galleryCursor >= galleryShown) {
+    appendGalleryTiles(Math.ceil((galleryCursor + 1) / GALLERY_PAGE) * GALLERY_PAGE);
+  }
+  let sel = null;
+  for (const t of galleryGrid.querySelectorAll('.gtile')) {
+    const isSel = Number(t.dataset.pos) === galleryCursor;
+    t.classList.toggle('selected', isSel);
+    if (isSel) sel = t;
+  }
+  if (sel) sel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function openGallery() {
+  if (galleryOpen || !state.files.length || Paint.isOpen() || studioIsOpen()) return;
+  if (cropMode) exitCrop();
+  galleryOpen = true;
+  galleryEl.hidden = false;
+  btnGallery.classList.add('active');
+  document.body.classList.add('gallery-open');
+  buildGalleryFormats();
+  rebuildGallery();
+}
+
+function closeGallery() {
+  if (!galleryOpen) return;
+  galleryOpen = false;
+  galleryEl.hidden = true;
+  btnGallery.classList.remove('active');
+  document.body.classList.remove('gallery-open');
+  // nettoyage complet : la visionneuse de base ne garde AUCUN poids
+  galleryObserver.disconnect();
+  gallerySentinelObserver.disconnect();
+  galleryGrid.innerHTML = '';
+  galleryList = [];
+  galleryShown = 0;
+  gallerySentinel = null;
+  galleryFilesRef = null;
+}
+
+function toggleGallery() {
+  if (galleryOpen) closeGallery();
+  else openGallery();
+}
+
+btnGallery.addEventListener('click', toggleGallery);
+gallerySort.addEventListener('change', rebuildGallery);
+galleryFormat.addEventListener('change', rebuildGallery);
+galleryDir.addEventListener('click', () => {
+  galleryAsc = !galleryAsc;
+  galleryDir.classList.toggle('is-desc', !galleryAsc);
+  galleryDir.title = galleryAsc ? 'Ordre croissant (cliquer : décroissant)' : 'Ordre décroissant (cliquer : croissant)';
+  rebuildGallery();
+});
+
+let gallerySearchTimer = null;
+gallerySearch.addEventListener('input', () => {
+  clearTimeout(gallerySearchTimer);
+  gallerySearchTimer = setTimeout(rebuildGallery, 150);
+});
+gallerySearch.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeGallery();
+});
+
 /* ---------- Plein écran ---------- */
 
 window.viewer.onFullscreenChanged((fs) => {
@@ -603,11 +970,9 @@ function prev() {
 function loadContext(context) {
   if (!context) return;
   if (cropMode) exitCrop();
-  // libère les vignettes et rendus PSD de l'ancien contexte (URL blob)
-  for (const f of state.files) {
-    if (f.thumbUrl && f.thumbUrl.startsWith('blob:')) URL.revokeObjectURL(f.thumbUrl);
-    if (f.psdUrl) URL.revokeObjectURL(f.psdUrl);
-  }
+  // libère les vignettes et rendus PSD de l'ancien contexte de CET onglet
+  // (les autres onglets gardent les leurs)
+  disposeFiles(state.files);
   thumbQueue.length = 0;
   state.files = context.files;
   state.index = context.index;
@@ -655,6 +1020,7 @@ function layoutCropSelection() {
 
 function enterCrop() {
   if (!currentFile() || image.hidden || cropMode || editBusy) return;
+  closeGallery();
   setFit();
   cropMode = true;
   btnCrop.classList.add('active');
@@ -1201,6 +1567,445 @@ infoOverlay.addEventListener('mousedown', (e) => {
   if (e.target === infoOverlay) hideInfo();
 });
 
+/* ---------- Upscale IA ----------
+   Agrandissement par Real-ESRGAN (moteur upscayl-bin, exécuté côté main).
+   Le moteur ne connaît que ×2/×3/×4 : un facteur personnalisé est obtenu
+   en upscalant au palier supérieur puis en redimensionnant précisément. */
+
+const upBackdrop = document.getElementById('up-backdrop');
+const upDialog = document.getElementById('up-dialog');
+const upClose = document.getElementById('up-close');
+const upSetup = document.getElementById('up-setup');
+const upScalesWrap = document.getElementById('up-scales');
+const upCustom = document.getElementById('up-custom');
+const upModel = document.getElementById('up-model');
+const upDimsFrom = document.getElementById('up-dims-from');
+const upDimsTo = document.getElementById('up-dims-to');
+const upError = document.getElementById('up-error');
+const upCancel = document.getElementById('up-cancel');
+const upRun = document.getElementById('up-run');
+const upProgress = document.getElementById('up-progress');
+const upProgressBar = document.getElementById('up-progress-bar');
+const upProgressPct = document.getElementById('up-progress-pct');
+const upAbort = document.getElementById('up-abort');
+const upResult = document.getElementById('up-result');
+const upCompare = document.getElementById('up-compare');
+const upImgBefore = document.getElementById('up-img-before');
+const upImgAfter = document.getElementById('up-img-after');
+const upAfterClip = document.getElementById('up-after-clip');
+const upDivider = document.getElementById('up-divider');
+const upResultDims = document.getElementById('up-result-dims');
+const upDiscard = document.getElementById('up-discard');
+const upSaveCopy = document.getElementById('up-save-copy');
+const upSave = document.getElementById('up-save');
+
+// Formats que le moteur lit directement ; le reste (PSD, BMP, TIFF…) est
+// d'abord décodé par la visionneuse et transmis en PNG.
+const UP_DIRECT_EXTS = new Set(['jpg', 'jpeg', 'jfif', 'png', 'webp']);
+
+const UP_MODEL_LABELS = {
+  'upscayl-standard-4x': 'Standard — meilleure qualité',
+  'upscayl-lite-4x': 'Léger — plus rapide',
+};
+
+const up = {
+  phase: 'setup', // setup | progress | result
+  scale: localStorage.getItem('upscaleScale') || '2',
+  running: false,
+  saving: false,
+  resultData: null, // PNG brut produit par le moteur (secours si canvas impossible)
+  resultCanvas: null,
+  afterUrl: null,
+  targetW: 0,
+  targetH: 0,
+  // vue de comparaison
+  zoom: 1,
+  minZoom: 1,
+  panX: 0,
+  panY: 0,
+  divider: 0.5,
+};
+
+function upIsOpen() {
+  return !upBackdrop.hidden;
+}
+
+function upFactor() {
+  if (up.scale === 'custom') {
+    const v = Number(String(upCustom.value).replace(',', '.'));
+    if (!Number.isFinite(v)) return 0;
+    return Math.min(8, Math.max(1.1, v));
+  }
+  return Number(up.scale);
+}
+
+function upShowError(message) {
+  upError.textContent = message;
+  upError.hidden = false;
+}
+
+function upSetPhase(phase) {
+  up.phase = phase;
+  upSetup.hidden = phase !== 'setup';
+  upProgress.hidden = phase !== 'progress';
+  upResult.hidden = phase !== 'result';
+  upDialog.classList.toggle('has-result', phase === 'result');
+}
+
+function upUpdateDims() {
+  const f = upFactor();
+  const w = image.naturalWidth;
+  const h = image.naturalHeight;
+  upDimsFrom.textContent = w && h ? `${w} × ${h} px` : '–';
+  upDimsTo.textContent =
+    w && h && f ? `${Math.round(w * f)} × ${Math.round(h * f)} px  (×${f.toLocaleString('fr-FR')})` : '–';
+}
+
+function upSelectScale(value) {
+  up.scale = value;
+  localStorage.setItem('upscaleScale', value);
+  for (const b of upScalesWrap.querySelectorAll('.up-scale')) {
+    b.classList.toggle('is-selected', b.dataset.scale === value);
+  }
+  upCustom.hidden = value !== 'custom';
+  upUpdateDims();
+}
+
+async function upLoadModels() {
+  upModel.innerHTML = '';
+  const names = await window.viewer.upscaleModels();
+  if (!names || names.length === 0) {
+    upRun.disabled = true;
+    upShowError(
+      'Moteur d’upscale introuvable : le dossier code_source_upscale (bin + models) doit accompagner l’application.'
+    );
+    return;
+  }
+  const remembered = localStorage.getItem('upscaleModel');
+  for (const name of names) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = UP_MODEL_LABELS[name] || name;
+    upModel.append(opt);
+  }
+  upModel.value = names.includes(remembered) ? remembered : names[0];
+  upRun.disabled = false;
+}
+
+function openUpscale() {
+  const file = currentFile();
+  if (!file || image.hidden || cropMode || editBusy || upIsOpen()) return;
+  up.resultData = null;
+  up.resultCanvas = null;
+  upError.hidden = true;
+  upSetPhase('setup');
+  upSelectScale(up.scale);
+  upBackdrop.hidden = false;
+  upLoadModels();
+}
+
+function closeUpscale() {
+  if (!upIsOpen()) return;
+  if (up.running) window.viewer.upscaleCancel();
+  if (up.afterUrl) URL.revokeObjectURL(up.afterUrl);
+  up.afterUrl = null;
+  up.resultData = null;
+  up.resultCanvas = null;
+  upImgBefore.removeAttribute('src');
+  upImgAfter.removeAttribute('src');
+  upBackdrop.hidden = true;
+  upDialog.classList.remove('has-result');
+}
+
+async function runUpscale() {
+  const file = currentFile();
+  if (!file || up.running) return;
+  const f = upFactor();
+  if (!f || f <= 1) {
+    upShowError('Le facteur doit être supérieur à 1 (entre 1,1 et 8).');
+    return;
+  }
+  localStorage.setItem('upscaleModel', upModel.value);
+  if (up.scale === 'custom') localStorage.setItem('upscaleCustom', String(f));
+
+  // palier moteur : l'entier supérieur, borné à [2, 4] ; l'ajustement exact
+  // (×1,5, ×2,7, ×6…) est fait ensuite sur canvas
+  const engineScale = Math.min(4, Math.max(2, Math.ceil(f)));
+  upError.hidden = true;
+  upProgressBar.style.width = '0%';
+  upProgressPct.textContent = '0 %';
+  upSetPhase('progress');
+  up.running = true;
+  try {
+    let payload;
+    const ext = extOf(file.name);
+    if (UP_DIRECT_EXTS.has(ext)) {
+      payload = { sourcePath: file.path, scale: engineScale, model: upModel.value };
+    } else {
+      const decoded = await decodeCurrentFile(file);
+      if (!decoded) throw new Error('Impossible de décoder cette image.');
+      const { img, url } = decoded;
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+      if (!blob) throw new Error('Impossible de préparer cette image.');
+      payload = {
+        data: new Uint8Array(await blob.arrayBuffer()),
+        ext: 'png',
+        scale: engineScale,
+        model: upModel.value,
+      };
+    }
+    const res = await window.viewer.upscaleRun(payload);
+    if (!upIsOpen()) return; // popup fermée pendant le traitement
+    if (res.cancelled) {
+      upSetPhase('setup');
+      return;
+    }
+    if (res.error || !res.data) throw new Error(res.error || 'Le moteur n’a produit aucun résultat.');
+    await upShowResult(res.data, f);
+  } catch (err) {
+    if (upIsOpen()) {
+      upSetPhase('setup');
+      upShowError(`Échec de l’agrandissement : ${err.message}`);
+    }
+  } finally {
+    up.running = false;
+  }
+}
+
+window.viewer.onUpscaleProgress((pct) => {
+  if (!upIsOpen() || up.phase !== 'progress') return;
+  const v = Math.max(0, Math.min(100, pct));
+  upProgressBar.style.width = `${v}%`;
+  upProgressPct.textContent = `${Math.round(v)} %`;
+});
+
+async function upShowResult(data, factor) {
+  up.resultData = new Uint8Array(data);
+  const srcW = image.naturalWidth;
+  const srcH = image.naturalHeight;
+  up.targetW = Math.max(1, Math.round(srcW * factor));
+  up.targetH = Math.max(1, Math.round(srcH * factor));
+
+  const { img, url } = await loadImageFromBlob(new Blob([up.resultData], { type: 'image/png' }));
+  let afterUrl = url;
+  try {
+    // canvas du résultat : sert à l'enregistrement (ré-encodage au format
+    // d'origine) et au redimensionnement exact d'un facteur personnalisé
+    const canvas = document.createElement('canvas');
+    canvas.width = up.targetW;
+    canvas.height = up.targetH;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, up.targetW, up.targetH);
+    up.resultCanvas = canvas;
+    if (img.naturalWidth !== up.targetW || img.naturalHeight !== up.targetH) {
+      const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      if (blob) {
+        URL.revokeObjectURL(url);
+        afterUrl = URL.createObjectURL(blob);
+      }
+    }
+  } catch {
+    // image trop grande pour un canvas : on garde le PNG brut du moteur
+    up.resultCanvas = null;
+    up.targetW = img.naturalWidth;
+    up.targetH = img.naturalHeight;
+  }
+
+  if (!upIsOpen()) {
+    URL.revokeObjectURL(afterUrl);
+    return;
+  }
+  up.afterUrl = afterUrl;
+  upImgBefore.src = image.src;
+  upImgAfter.src = up.afterUrl;
+  upResultDims.textContent = `${srcW} × ${srcH} px  →  ${up.targetW} × ${up.targetH} px`;
+  upSetPhase('result');
+  requestAnimationFrame(() => upLayoutCompare(true));
+}
+
+/* --- Vue de comparaison : les deux images partagent la même vue
+       (zoom molette, déplacement au glisser), la poignée révèle l'après. --- */
+
+function upApplyCompare() {
+  const w = up.targetW * up.zoom;
+  const h = up.targetH * up.zoom;
+  for (const el of [upImgBefore, upImgAfter]) {
+    el.style.width = `${w}px`;
+    el.style.height = `${h}px`;
+    el.style.transform = `translate(${up.panX}px, ${up.panY}px)`;
+  }
+  const x = upCompare.clientWidth * up.divider;
+  upAfterClip.style.clipPath = `inset(0 0 0 ${x}px)`;
+  upDivider.style.left = `${x}px`;
+}
+
+function upClampPan() {
+  const rect = upCompare.getBoundingClientRect();
+  const w = up.targetW * up.zoom;
+  const h = up.targetH * up.zoom;
+  up.panX = w <= rect.width ? (rect.width - w) / 2 : Math.min(0, Math.max(rect.width - w, up.panX));
+  up.panY = h <= rect.height ? (rect.height - h) / 2 : Math.min(0, Math.max(rect.height - h, up.panY));
+}
+
+function upLayoutCompare(reset) {
+  const rect = upCompare.getBoundingClientRect();
+  if (!rect.width || !up.targetW) return;
+  up.minZoom = Math.min(rect.width / up.targetW, rect.height / up.targetH, 1);
+  if (reset) {
+    up.zoom = up.minZoom;
+    up.divider = 0.5;
+  }
+  up.zoom = Math.max(up.minZoom, up.zoom);
+  upClampPan();
+  upApplyCompare();
+}
+
+upCompare.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = upCompare.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+  const z1 = up.zoom;
+  const z2 = Math.min(8, Math.max(up.minZoom, z1 * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
+  up.panX = cx - ((cx - up.panX) / z1) * z2;
+  up.panY = cy - ((cy - up.panY) / z1) * z2;
+  up.zoom = z2;
+  upClampPan();
+  upApplyCompare();
+}, { passive: false });
+
+let upDrag = null; // { mode: 'divider' | 'pan', x, y }
+
+upCompare.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  const mode = e.target.closest('#up-divider') ? 'divider' : 'pan';
+  upDrag = { mode, x: e.clientX, y: e.clientY };
+  upCompare.setPointerCapture(e.pointerId);
+  if (mode === 'pan') upCompare.classList.add('is-panning');
+  if (mode === 'divider') upMoveDivider(e);
+});
+
+function upMoveDivider(e) {
+  const rect = upCompare.getBoundingClientRect();
+  up.divider = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+  upApplyCompare();
+}
+
+upCompare.addEventListener('pointermove', (e) => {
+  if (!upDrag) return;
+  if (upDrag.mode === 'divider') {
+    upMoveDivider(e);
+    return;
+  }
+  up.panX += e.clientX - upDrag.x;
+  up.panY += e.clientY - upDrag.y;
+  upDrag.x = e.clientX;
+  upDrag.y = e.clientY;
+  upClampPan();
+  upApplyCompare();
+});
+
+const upEndDrag = () => {
+  upDrag = null;
+  upCompare.classList.remove('is-panning');
+};
+upCompare.addEventListener('pointerup', upEndDrag);
+upCompare.addEventListener('pointercancel', upEndDrag);
+
+/* --- Enregistrement du résultat --- */
+
+async function upSaveResult(mode) {
+  const file = currentFile();
+  if (!file || up.saving || (!up.resultCanvas && !up.resultData)) return;
+  up.saving = true;
+  upSave.disabled = true;
+  upSaveCopy.disabled = true;
+  try {
+    let savedPath = null;
+    if (up.resultCanvas) {
+      if (mode === 'copy') {
+        const target = encodeTarget(extOf(file.name));
+        const blob = await new Promise((res) => up.resultCanvas.toBlob(res, target.mime, 0.95));
+        if (!blob) throw new Error('encodage impossible');
+        savedPath = await window.viewer.saveCopy({
+          sourcePath: file.path,
+          outExt: target.outExt,
+          data: new Uint8Array(await blob.arrayBuffer()),
+        });
+      } else {
+        savedPath = await saveCanvasInPlace(up.resultCanvas, file);
+      }
+    } else {
+      // secours sans canvas : le PNG du moteur est écrit tel quel
+      const payload = { sourcePath: file.path, outExt: 'png', data: up.resultData };
+      savedPath =
+        mode === 'copy'
+          ? await window.viewer.saveCopy(payload)
+          : await window.viewer.saveInPlace(payload);
+    }
+    if (!savedPath) {
+      upShowError('Enregistrement impossible (fichier verrouillé ou dossier protégé ?).');
+      upSetPhase('setup');
+      return;
+    }
+    closeUpscale();
+    await refreshAfterSave(savedPath, file);
+  } finally {
+    up.saving = false;
+    upSave.disabled = false;
+    upSaveCopy.disabled = false;
+  }
+}
+
+/* Accueil : « Agrandir avec l'IA » — choisir une image, puis la popup
+   d'upscale s'ouvre d'elle-même dès que l'image est affichée. */
+let pendingUpscaleOpen = false;
+
+document.getElementById('home-upscale').addEventListener('click', async () => {
+  const ctx = await window.viewer.pickFile();
+  if (!ctx) return;
+  pendingUpscaleOpen = true;
+  loadContext(ctx);
+});
+
+btnUpscale.addEventListener('click', openUpscale);
+upClose.addEventListener('click', closeUpscale);
+upCancel.addEventListener('click', closeUpscale);
+upDiscard.addEventListener('click', closeUpscale);
+upAbort.addEventListener('click', () => window.viewer.upscaleCancel());
+upRun.addEventListener('click', runUpscale);
+upSave.addEventListener('click', () => upSaveResult('overwrite'));
+upSaveCopy.addEventListener('click', () => upSaveResult('copy'));
+
+for (const b of upScalesWrap.querySelectorAll('.up-scale')) {
+  b.addEventListener('click', () => upSelectScale(b.dataset.scale));
+}
+upCustom.value = localStorage.getItem('upscaleCustom') || '2.5';
+upCustom.addEventListener('input', upUpdateDims);
+
+upBackdrop.addEventListener('mousedown', (e) => {
+  // clic hors du dialogue : ferme seulement à l'étape des réglages
+  // (pas question de perdre un résultat ou un traitement en cours)
+  if (e.target === upBackdrop && up.phase === 'setup') closeUpscale();
+});
+
+// Échap ferme aussi quand la saisie a le focus (champ facteur, liste modèle)
+upBackdrop.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeUpscale();
+  e.stopPropagation();
+});
+
+window.addEventListener('resize', () => {
+  if (upIsOpen() && up.phase === 'result') upLayoutCompare(up.zoom === up.minZoom);
+});
+
 /* ---------- Suppression et impression ---------- */
 
 async function deleteCurrent() {
@@ -1225,6 +2030,149 @@ btnPrint.addEventListener('click', () => {
   const file = currentFile();
   if (file) window.viewer.printFile(file.url);
 });
+
+/* ---------- Onglets ----------
+   Chaque onglet porte son propre contexte (dossier + image courante + vue).
+   Le « + » ouvre un onglet sur l'accueil ; un onglet peut être détaché
+   dans une nouvelle fenêtre. Les objets fichiers (et leurs vignettes déjà
+   chargées) restent vivants tant que l'onglet existe. */
+
+const tabsEl = document.getElementById('tabs');
+const tabAddBtn = document.getElementById('tab-add');
+const tabs = [];
+let tabSeq = 0;
+let activeTab = null;
+let pendingTabView = null; // vue à restaurer au retour sur un onglet
+
+const TAB_ICONS = {
+  close: '<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />',
+  detach:
+    '<path d="M14 5h5v5" /><path d="m19 5-7 7" /><path d="M9 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3" />',
+};
+
+function tabIcon(name) {
+  return (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    TAB_ICONS[name] +
+    '</svg>'
+  );
+}
+
+function createTab() {
+  const t = { id: ++tabSeq, files: [], index: -1, view: null };
+  tabs.push(t);
+  return t;
+}
+
+function syncActiveTab() {
+  if (!activeTab) return;
+  activeTab.files = state.files;
+  activeTab.index = state.index;
+}
+
+function tabTitle(t) {
+  const f = t.index >= 0 ? t.files[t.index] : null;
+  return f ? f.name : 'Accueil';
+}
+
+function renderTabs() {
+  if (!tabsEl) return;
+  tabsEl.innerHTML = '';
+  for (const t of tabs) {
+    const el = document.createElement('div');
+    el.className = 'tab' + (t === activeTab ? ' is-active' : '');
+    el.title = tabTitle(t);
+    el.addEventListener('click', () => switchTab(t));
+
+    const title = document.createElement('span');
+    title.className = 'tab-title';
+    title.textContent = tabTitle(t);
+
+    const actions = document.createElement('span');
+    actions.className = 'tab-actions';
+    const detach = document.createElement('button');
+    detach.title = 'Détacher dans une nouvelle fenêtre';
+    detach.innerHTML = tabIcon('detach');
+    detach.addEventListener('click', (e) => {
+      e.stopPropagation();
+      detachTab(t);
+    });
+    const close = document.createElement('button');
+    close.title = 'Fermer l’onglet';
+    close.innerHTML = tabIcon('close');
+    close.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeTab(t);
+    });
+    actions.append(detach, close);
+
+    el.append(title, actions);
+    tabsEl.appendChild(el);
+  }
+}
+
+function disposeFiles(files) {
+  for (const f of files) {
+    if (f.thumbUrl && f.thumbUrl.startsWith('blob:')) URL.revokeObjectURL(f.thumbUrl);
+    if (f.psdUrl) URL.revokeObjectURL(f.psdUrl);
+  }
+}
+
+function saveTabView() {
+  if (!activeTab) return;
+  syncActiveTab();
+  const f = currentFile();
+  activeTab.view = f
+    ? { path: f.path, zoom: state.zoom, panX: state.panX, panY: state.panY, fit: state.fit }
+    : null;
+}
+
+function activateTab(t) {
+  if (cropMode) exitCrop();
+  activeTab = t;
+  state.files = t.files;
+  state.index = t.index;
+  state.stat = null;
+  pendingTabView = t.view;
+  thumbQueue.length = 0;
+  buildFilmstrip();
+  render();
+  if (window.Pro && window.Pro.active()) window.Pro.onContext();
+}
+
+function switchTab(t) {
+  if (t === activeTab) return;
+  saveTabView();
+  activateTab(t);
+}
+
+function newTab() {
+  if (Paint.isOpen() || studioIsOpen()) return;
+  saveTabView();
+  activateTab(createTab());
+}
+
+function closeTab(t) {
+  const i = tabs.indexOf(t);
+  if (i < 0) return;
+  tabs.splice(i, 1);
+  disposeFiles(t.files);
+  if (t === activeTab) {
+    activeTab = null;
+    activateTab(tabs[Math.min(i, tabs.length - 1)] || createTab());
+  } else {
+    renderTabs();
+  }
+}
+
+function detachTab(t) {
+  const f = t.index >= 0 ? t.files[t.index] : null;
+  window.viewer.openNewWindow(f ? f.path : null);
+  closeTab(t);
+}
+
+tabAddBtn.addEventListener('click', newTab);
 
 /* ---------- Thème clair / sombre (persisté) ---------- */
 
@@ -1536,7 +2484,9 @@ image.addEventListener('dblclick', (e) => {
 stage.addEventListener(
   'wheel',
   (e) => {
-    if (currentFile() === null || cropMode) return;
+    // galerie ouverte : la molette doit faire défiler la grille, pas
+    // zoomer l'image cachée derrière
+    if (currentFile() === null || cropMode || galleryOpen) return;
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
     setZoomAt(state.zoom * factor, e.clientX, e.clientY);
@@ -1544,10 +2494,14 @@ stage.addEventListener(
   { passive: false }
 );
 
-/* Déplacement (pan) libre à la souris, sans aucune contrainte de bord. */
+/* Déplacement (pan) libre à la souris — clic gauche ou clic molette,
+   sans aucune contrainte de bord. */
 let panStart = null;
 stage.addEventListener('mousedown', (e) => {
-  if (e.button !== 0 || currentFile() === null || cropMode) return;
+  if ((e.button !== 0 && e.button !== 1) || currentFile() === null || cropMode || galleryOpen) {
+    return;
+  }
+  if (e.button === 1) e.preventDefault(); // neutralise l'auto-défilement natif
   panStart = {
     x: e.clientX,
     y: e.clientY,
@@ -1577,8 +2531,34 @@ window.addEventListener('keydown', (e) => {
   ) {
     return;
   }
+  // galerie Global ouverte : elle capte le clavier
+  if (galleryOpen) {
+    if (e.key === 'Escape' || (e.ctrlKey && e.key.toLowerCase() === 'g')) {
+      e.preventDefault();
+      closeGallery();
+      return;
+    }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      moveGalleryCursor(e.key === 'ArrowRight' ? 1 : -1);
+      return;
+    }
+    if (e.key === 'Enter') {
+      const it = galleryList[galleryCursor];
+      if (it) {
+        goTo(it.i);
+        closeGallery();
+      }
+      return;
+    }
+    return;
+  }
   if (!infoOverlay.hidden) {
     if (e.key === 'Escape' || e.key.toLowerCase() === 'i') hideInfo();
+    return;
+  }
+  if (upIsOpen()) {
+    if (e.key === 'Escape') closeUpscale();
     return;
   }
   if (cropMode) {
@@ -1601,6 +2581,16 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key.toLowerCase() === 'o') {
     e.preventDefault();
     btnOpen.click();
+    return;
+  }
+  if (e.ctrlKey && e.key.toLowerCase() === 't') {
+    e.preventDefault();
+    newTab();
+    return;
+  }
+  if (e.ctrlKey && e.key.toLowerCase() === 'g') {
+    e.preventDefault();
+    openGallery();
     return;
   }
   if (e.ctrlKey && e.key.toLowerCase() === 'p') {
@@ -1690,6 +2680,7 @@ applyFilmstripVisibility();
 window.viewer.onOpenContext(loadContext);
 
 window.viewer.ready().then((context) => {
+  activeTab = createTab();
   if (context) {
     loadContext(context);
   } else {

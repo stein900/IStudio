@@ -30,9 +30,34 @@
 
 .pro-row {
   display: flex;
+  /* explicite : une section peut cumuler .pro-sec (colonne) et .pro-row —
+     sans ceci, le flex-direction: column de .pro-sec l'emporte et les
+     contrôles s'empilent au lieu de s'aligner */
+  flex-direction: row;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* Ligne compacte : tous les contrôles côte à côte, jamais de retour à la
+   ligne (Vue : grille + pas + 1:1 + verrou) */
+.pro-row-tight {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.pro-row-tight .pro-label {
+  flex: none;
+}
+
+.pro-row-tight .pro-btn {
+  flex: none;
+  padding: 0 9px;
+}
+
+.pro-row-tight #pro-grid-step {
+  flex: none;
+  width: 52px;
 }
 
 .pro-label {

@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('viewer', {
   ready: () => ipcRenderer.invoke('renderer-ready'),
+  openNewWindow: (filePath) => ipcRenderer.invoke('open-new-window', filePath),
   pickFile: () => ipcRenderer.invoke('pick-file'),
   reloadContext: (filePath) => ipcRenderer.invoke('reload-context', filePath),
   setTitle: (title) => ipcRenderer.invoke('set-title', title),
@@ -12,6 +13,7 @@ contextBridge.exposeInMainWorld('viewer', {
   storeThumbnail: (payload) => ipcRenderer.invoke('store-thumbnail', payload),
   readFileHead: (filePath, bytes) => ipcRenderer.invoke('read-file-head', { filePath, bytes }),
   statSizes: (paths) => ipcRenderer.invoke('stat-sizes', paths),
+  statMany: (paths) => ipcRenderer.invoke('stat-many', paths),
   readFolderMeta: (filePath) => ipcRenderer.invoke('read-folder-meta', filePath),
   writeFolderMeta: (payload) => ipcRenderer.invoke('write-folder-meta', payload),
   readFile: (filePath) => ipcRenderer.invoke('read-file', filePath),
@@ -23,6 +25,12 @@ contextBridge.exposeInMainWorld('viewer', {
   saveProject: (payload) => ipcRenderer.invoke('save-project', payload),
   openProject: () => ipcRenderer.invoke('open-project'),
   printFile: (fileUrl) => ipcRenderer.invoke('print-file', fileUrl),
+  upscaleModels: () => ipcRenderer.invoke('upscale-models'),
+  upscaleRun: (payload) => ipcRenderer.invoke('upscale-run', payload),
+  upscaleCancel: () => ipcRenderer.invoke('upscale-cancel'),
+  onUpscaleProgress: (callback) => {
+    ipcRenderer.on('upscale-progress', (_event, pct) => callback(pct));
+  },
   onFullscreenChanged: (callback) => {
     ipcRenderer.on('fullscreen-changed', (_event, isFullscreen) => callback(isFullscreen));
   },

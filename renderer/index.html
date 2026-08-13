@@ -8,6 +8,16 @@
   <link rel="stylesheet" href="paint.css" />
 </head>
 <body>
+  <div id="tabbar">
+    <div id="tabs" role="tablist"></div>
+    <button id="tab-add" title="Nouvel onglet — s'ouvre sur l'accueil (Ctrl+T)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="12" y1="5" x2="12" y2="19" />
+        <line x1="5" y1="12" x2="19" y2="12" />
+      </svg>
+    </button>
+  </div>
+
   <header id="toolbar">
     <div class="toolbar-group">
       <button id="btn-open" class="btn-labeled" title="Ouvrir une image (Ctrl+O)">
@@ -21,6 +31,15 @@
           <path d="m3 10.5 9-7.5 9 7.5" />
           <path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5" />
         </svg>
+      </button>
+      <button id="btn-gallery" class="btn-labeled" title="Vue globale du dossier : grille, tri et filtres (Ctrl+G)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+        </svg>
+        <span>Global</span>
       </button>
       <span class="toolbar-sep" aria-hidden="true"></span>
       <button id="btn-prev" class="icon-btn" title="Image précédente (←)">
@@ -79,6 +98,13 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M6 2v14a2 2 0 0 0 2 2h14" />
           <path d="M18 22V8a2 2 0 0 0-2-2H2" />
+        </svg>
+      </button>
+      <button id="btn-upscale" class="icon-btn" title="Agrandir avec l'IA (upscale ×2, ×3, ×4 ou personnalisé)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9.6 9.6 3.4 11.5a.4.4 0 0 0 0 .76l6.2 1.9a1.6 1.6 0 0 1 1.06 1.06l1.9 6.2a.4.4 0 0 0 .76 0l1.9-6.2a1.6 1.6 0 0 1 1.06-1.06l6.2-1.9a.4.4 0 0 0 0-.76l-6.2-1.9a1.6 1.6 0 0 1-1.06-1.06l-1.9-6.2a.4.4 0 0 0-.76 0l-1.9 6.2A1.6 1.6 0 0 1 9.6 9.6Z" />
+          <path d="M5 3v4" />
+          <path d="M7 5H3" />
         </svg>
       </button>
       <button id="btn-paint" class="icon-btn" title="Modifier avec Paint (annotations, dessin)">
@@ -207,6 +233,17 @@
             <span class="home-card-title">Ouvrir un projet</span>
             <span class="home-card-sub">Reprendre un montage .istudio avec ses calques</span>
           </button>
+          <button id="home-upscale" class="home-card home-card-wide">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9.6 9.6 3.4 11.5a.4.4 0 0 0 0 .76l6.2 1.9a1.6 1.6 0 0 1 1.06 1.06l1.9 6.2a.4.4 0 0 0 .76 0l1.9-6.2a1.6 1.6 0 0 1 1.06-1.06l6.2-1.9a.4.4 0 0 0 0-.76l-6.2-1.9a1.6 1.6 0 0 1-1.06-1.06l-1.9-6.2a.4.4 0 0 0-.76 0l-1.9 6.2A1.6 1.6 0 0 1 9.6 9.6Z" />
+              <path d="M5 3v4" />
+              <path d="M7 5H3" />
+            </svg>
+            <span class="home-card-text">
+              <span class="home-card-title">Agrandir avec l'IA</span>
+              <span class="home-card-sub">Upscale ×2, ×3, ×4 ou personnalisé : choisir une image, comparer avant/après, puis enregistrer ou créer une copie</span>
+            </span>
+          </button>
         </div>
       </div>
     </div>
@@ -258,6 +295,37 @@
       </svg>
       <p>Impossible d'afficher cette image</p>
       <p id="error-name" class="empty-hint"></p>
+    </div>
+
+    <div id="gallery" hidden>
+      <div id="gallery-bar">
+        <div id="gallery-search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <line x1="16.5" y1="16.5" x2="21" y2="21" />
+          </svg>
+          <input id="gallery-search" type="text" placeholder="Rechercher un fichier…" spellcheck="false" />
+        </div>
+        <label class="gallery-lbl" for="gallery-sort">Trier</label>
+        <select id="gallery-sort">
+          <option value="name">Nom</option>
+          <option value="mtime">Date de modification</option>
+          <option value="size">Taille</option>
+          <option value="type">Type</option>
+        </select>
+        <button id="gallery-dir" title="Ordre croissant / décroissant">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <polyline points="6 13 12 19 18 13" />
+          </svg>
+        </button>
+        <label class="gallery-lbl" for="gallery-format">Format</label>
+        <select id="gallery-format">
+          <option value="all">Tous</option>
+        </select>
+        <span id="gallery-count"></span>
+      </div>
+      <div id="gallery-grid"></div>
     </div>
 
     <div id="crop-layer" hidden>
@@ -312,6 +380,95 @@
         </button>
       </div>
       <div id="info-body"></div>
+    </div>
+  </div>
+
+  <div id="up-backdrop" hidden>
+    <div id="up-dialog" role="dialog" aria-modal="true" aria-labelledby="up-title">
+      <div id="up-header">
+        <div id="up-title-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9.6 9.6 3.4 11.5a.4.4 0 0 0 0 .76l6.2 1.9a1.6 1.6 0 0 1 1.06 1.06l1.9 6.2a.4.4 0 0 0 .76 0l1.9-6.2a1.6 1.6 0 0 1 1.06-1.06l6.2-1.9a.4.4 0 0 0 0-.76l-6.2-1.9a1.6 1.6 0 0 1-1.06-1.06l-1.9-6.2a.4.4 0 0 0-.76 0l-1.9 6.2A1.6 1.6 0 0 1 9.6 9.6Z" />
+            <path d="M5 3v4" />
+            <path d="M7 5H3" />
+          </svg>
+          <h2 id="up-title">Agrandir avec l'IA</h2>
+        </div>
+        <button id="up-close" class="icon-btn" title="Fermer (Échap)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+
+      <div id="up-setup">
+        <div class="up-row">
+          <span class="up-label">Facteur</span>
+          <div id="up-scales">
+            <button class="up-scale" data-scale="2">×2</button>
+            <button class="up-scale" data-scale="3">×3</button>
+            <button class="up-scale" data-scale="4">×4</button>
+            <button class="up-scale" data-scale="custom">Personnalisé</button>
+          </div>
+          <input id="up-custom" type="number" min="1.1" max="8" step="0.1" value="2.5" hidden />
+        </div>
+        <div class="up-row">
+          <span class="up-label">Modèle</span>
+          <select id="up-model"></select>
+        </div>
+        <div id="up-dims">
+          <span id="up-dims-from">–</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="5" y1="12" x2="19" y2="12" />
+            <polyline points="12 5 19 12 12 19" />
+          </svg>
+          <span id="up-dims-to">–</span>
+        </div>
+        <p id="up-note">Traitement local sur la carte graphique (Real-ESRGAN). Les grandes images peuvent prendre plusieurs minutes. Au tout premier lancement, un bref test choisit le processeur graphique le plus fiable.</p>
+        <p id="up-error" hidden></p>
+        <div class="up-buttons">
+          <button id="up-cancel" class="btn-labeled">Annuler</button>
+          <button id="up-run" class="btn-labeled np-primary">Lancer l'agrandissement</button>
+        </div>
+      </div>
+
+      <div id="up-progress" hidden>
+        <div id="up-progress-track"><div id="up-progress-bar"></div></div>
+        <div id="up-progress-info">
+          <span id="up-progress-label">Agrandissement en cours…</span>
+          <span id="up-progress-pct">0 %</span>
+        </div>
+        <div class="up-buttons">
+          <button id="up-abort" class="btn-labeled">Annuler</button>
+        </div>
+      </div>
+
+      <div id="up-result" hidden>
+        <div id="up-compare">
+          <img id="up-img-before" alt="" draggable="false" />
+          <div id="up-after-clip"><img id="up-img-after" alt="" draggable="false" /></div>
+          <div id="up-divider">
+            <div id="up-divider-handle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="9 18 3 12 9 6" />
+                <polyline points="15 6 21 12 15 18" />
+              </svg>
+            </div>
+          </div>
+          <span class="up-tag" id="up-tag-before">Avant</span>
+          <span class="up-tag" id="up-tag-after">Après</span>
+        </div>
+        <div id="up-result-meta">
+          <span id="up-result-dims"></span>
+          <span id="up-result-hint">Molette : zoomer · glisser : déplacer · poignée : comparer avant / après</span>
+        </div>
+        <div class="up-buttons">
+          <button id="up-discard" class="btn-labeled">Annuler</button>
+          <button id="up-save-copy" class="btn-labeled">Sauvegarder une copie</button>
+          <button id="up-save" class="btn-labeled np-primary">Enregistrer cette version</button>
+        </div>
+      </div>
     </div>
   </div>
 
