@@ -12,6 +12,8 @@
 window.Studio = (() => {
   const C = window.StudioCore;
   const T = window.StudioTools;
+  // i18n : cle = phrase francaise ; les attributs title sont balayes par I18n.apply
+  const st = (str, params) => (window.I18n ? window.I18n.t(str, params) : str);
 
   const ICONS = {
     pointer: '<path d="m4 3 7.5 17 2.2-7.3L21 10.5z" />',
@@ -45,6 +47,10 @@ window.Studio = (() => {
     zoomOut: '<circle cx="11" cy="11" r="7" /><line x1="16.5" y1="16.5" x2="21" y2="21" /><line x1="8" y1="11" x2="14" y2="11" />',
     fit: '<path d="M8 3H5a2 2 0 0 0-2 2v3" /><path d="M21 8V5a2 2 0 0 0-2-2h-3" /><path d="M3 16v3a2 2 0 0 0 2 2h3" /><path d="M16 21h3a2 2 0 0 0 2-2v-3" />',
     textLayer: '<polyline points="4 7 4 4 20 4 20 7" /><line x1="9" y1="20" x2="15" y2="20" /><line x1="12" y1="4" x2="12" y2="20" />',
+    ruler: '<path d="M21.3 8.7 15.3 2.7a1 1 0 0 0-1.4 0L2.7 13.9a1 1 0 0 0 0 1.4l6 6a1 1 0 0 0 1.4 0L21.3 10a1 1 0 0 0 0-1.3Z" /><path d="m7.5 10.5 2 2" /><path d="m10.5 7.5 2 2" /><path d="m13.5 4.5 2 2" /><path d="m4.5 13.5 2 2" />',
+    grid: '<rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18" /><path d="M3 15h18" /><path d="M9 3v18" /><path d="M15 3v18" />',
+    bandage: '<path d="M18 6a2.83 2.83 0 0 1 4 4l-12 12a2.83 2.83 0 0 1-4-4Z" /><path d="M6 18a2.83 2.83 0 0 1-4-4L14 2a2.83 2.83 0 0 1 4 4Z" /><path d="M10 10h.01" /><path d="M10 14h.01" /><path d="M14 10h.01" /><path d="M14 14h.01" />',
+    compass: '<circle cx="12" cy="5" r="2" /><path d="m3 21 8.02-14.26" /><path d="m12.99 6.74 1.93 3.44" /><path d="M19.14 12a10 10 0 0 1-14.28 0" /><path d="m21 21-2.16-3.84" />',
   };
 
   function svgIcon(name, size = 15) {
@@ -63,6 +69,9 @@ window.Studio = (() => {
   let antsTimer = null;
   let antsPhase = 0;
   let opacityBefore = null;
+  // affichages d'aide (persistés) : distances aux bords, grille du document
+  let showDistances = localStorage.getItem('studioShowDist') === 'true';
+  let showGrid = localStorage.getItem('studioShowGrid') === 'true';
 
   /* ================= Construction de l'interface ================= */
 
@@ -73,18 +82,21 @@ window.Studio = (() => {
     root.innerHTML = `
       <header id="studio-topbar">
         <div class="studio-group">
-          <button id="studio-close" class="studio-btn">${svgIcon('back', 16)}<span>Retour</span></button>
+          <button id="studio-close" class="studio-btn">${svgIcon('back', 16)}<span data-i18n>Retour</span></button>
           <span class="studio-sep"></span>
           <div id="studio-title">
             <span id="studio-title-label">Studio</span>
             <span id="studio-file-name"></span>
           </div>
           <span class="studio-sep"></span>
-          <button class="studio-btn studio-menu-btn" data-menu="image">Image</button>
-          <button class="studio-btn studio-menu-btn" data-menu="reglages">Réglages</button>
-          <button class="studio-btn studio-menu-btn" data-menu="filtres">Filtres</button>
+          <button class="studio-btn studio-menu-btn" data-menu="image" data-i18n>Image</button>
+          <button class="studio-btn studio-menu-btn" data-menu="reglages" data-i18n>Réglages</button>
+          <button class="studio-btn studio-menu-btn" data-menu="filtres" data-i18n>Filtres</button>
         </div>
         <div class="studio-group">
+          <button id="studio-toggle-dist" class="studio-tb" title="Distances du calque sélectionné aux bords du canevas (repères roses)">${svgIcon('ruler')}</button>
+          <button id="studio-toggle-grid" class="studio-tb" title="Grille du document">${svgIcon('grid')}</button>
+          <span class="studio-sep"></span>
           <button id="studio-undo" class="studio-tb" title="Annuler (Ctrl+Z)">${svgIcon('undo')}</button>
           <button id="studio-redo" class="studio-tb" title="Rétablir (Ctrl+Maj+Z)">${svgIcon('redo')}</button>
           <span class="studio-sep"></span>
@@ -93,10 +105,21 @@ window.Studio = (() => {
           <button id="studio-zoom-in" class="studio-tb" title="Zoom avant (+ ou molette)">${svgIcon('zoomIn')}</button>
           <button id="studio-zoom-fit" class="studio-tb" title="Ajuster à la fenêtre (0)">${svgIcon('fit')}</button>
           <span class="studio-sep"></span>
-          <button id="studio-save" class="studio-btn studio-btn-primary" title="Aplatir le montage dans le fichier (Ctrl+S)">${svgIcon('save', 16)}<span>Enregistrer</span></button>
+          <button id="studio-save" class="studio-btn studio-btn-primary" title="Aplatir le montage dans le fichier (Ctrl+S)">${svgIcon('save', 16)}<span data-i18n>Enregistrer</span></button>
         </div>
       </header>
-      <div id="studio-optionsbar"></div>
+      <div id="studio-optionsbar">
+        <div id="studio-opt-tools"></div>
+        <div id="studio-info" title="Objet sélectionné — les valeurs sont modifiables (Entrée pour appliquer)">
+          <span class="sinf"><span class="sinf-k">X</span><input id="sinf-x" class="sinf-in" type="number" step="1" /></span>
+          <span class="sinf"><span class="sinf-k">Y</span><input id="sinf-y" class="sinf-in" type="number" step="1" /></span>
+          <span class="sinf"><span class="sinf-k">L</span><input id="sinf-l" class="sinf-in" type="number" step="1" min="1" /></span>
+          <span class="sinf"><span class="sinf-k">H</span><input id="sinf-h" class="sinf-in" type="number" step="1" min="1" /></span>
+          <span class="sinf" title="Angle de rotation (degrés)"><span class="sinf-k">A</span><input id="sinf-a" class="sinf-in" type="number" step="0.1" /></span>
+          <span class="sinf" title="Inclinaison (degrés)"><span class="sinf-k">V</span><input id="sinf-v" class="sinf-in" type="number" step="0.1" /></span>
+          <span id="sinf-name">–</span>
+        </div>
+      </div>
       <div id="studio-body">
         <nav id="studio-toolbar"></nav>
         <div id="studio-stage">
@@ -109,15 +132,15 @@ window.Studio = (() => {
         </div>
         <aside id="studio-layers">
           <div id="studio-layers-head">
-            <span>${svgIcon('layers', 14)}Calques</span>
+            <span>${svgIcon('layers', 14)}<span data-i18n>Calques</span></span>
             <button id="studio-add-layer" class="studio-tb" title="Nouveau calque vide (au-dessus de l'actif)">${svgIcon('plus', 14)}</button>
           </div>
           <div id="studio-blend-row">
-            <span>Fusion</span>
+            <span data-i18n>Fusion</span>
             <select id="studio-blend" title="Mode de fusion du calque actif"></select>
           </div>
           <div id="studio-opacity-row">
-            <span>Opacité</span>
+            <span data-i18n>Opacité</span>
             <input id="studio-opacity" type="range" min="0" max="100" value="100" />
             <span id="studio-opacity-val">100 %</span>
           </div>
@@ -133,10 +156,10 @@ window.Studio = (() => {
         <div class="sbp-top">
           <canvas id="sbp-preview" width="84" height="84"></canvas>
           <div class="sbp-sliders">
-            <div class="sbp-row"><span class="sbp-lab">Taille</span><input id="sbp-size" type="range" min="0" max="1000" /><input id="sbp-size-num" class="sbp-num" type="number" min="1" max="1000" step="1" /><span class="sbp-unit">px</span></div>
-            <div class="sbp-row"><span class="sbp-lab">Dureté</span><input id="sbp-hardness" type="range" min="0" max="100" /><input id="sbp-hardness-num" class="sbp-num" type="number" min="0" max="100" step="1" /><span class="sbp-unit">%</span></div>
-            <div class="sbp-row"><span class="sbp-lab">Rondeur</span><input id="sbp-roundness" type="range" min="10" max="100" /><input id="sbp-roundness-num" class="sbp-num" type="number" min="10" max="100" step="1" /><span class="sbp-unit">%</span></div>
-            <div class="sbp-row"><span class="sbp-lab">Angle</span><input id="sbp-angle" type="range" min="0" max="180" /><input id="sbp-angle-num" class="sbp-num" type="number" min="0" max="180" step="1" /><span class="sbp-unit">°</span></div>
+            <div class="sbp-row"><span class="sbp-lab" data-i18n>Taille</span><input id="sbp-size" type="range" min="0" max="1000" /><input id="sbp-size-num" class="sbp-num" type="number" min="1" max="1000" step="1" /><span class="sbp-unit">px</span></div>
+            <div class="sbp-row"><span class="sbp-lab" data-i18n>Dureté</span><input id="sbp-hardness" type="range" min="0" max="100" /><input id="sbp-hardness-num" class="sbp-num" type="number" min="0" max="100" step="1" /><span class="sbp-unit">%</span></div>
+            <div class="sbp-row"><span class="sbp-lab" data-i18n>Rondeur</span><input id="sbp-roundness" type="range" min="10" max="100" /><input id="sbp-roundness-num" class="sbp-num" type="number" min="10" max="100" step="1" /><span class="sbp-unit">%</span></div>
+            <div class="sbp-row"><span class="sbp-lab" data-i18n>Angle</span><input id="sbp-angle" type="range" min="0" max="180" /><input id="sbp-angle-num" class="sbp-num" type="number" min="0" max="180" step="1" /><span class="sbp-unit">°</span></div>
           </div>
         </div>
         <div class="sbp-presets-head">Default</div>
@@ -148,13 +171,14 @@ window.Studio = (() => {
           <div id="studio-modal-title"></div>
           <div id="studio-modal-fields"></div>
           <div id="studio-modal-buttons">
-            <button id="studio-modal-cancel" class="studio-btn">Annuler</button>
+            <button id="studio-modal-cancel" class="studio-btn" data-i18n>Annuler</button>
             <button id="studio-modal-ok" class="studio-btn studio-btn-primary">OK</button>
           </div>
         </div>
       </div>
     `;
     document.body.appendChild(root);
+    if (window.I18n) window.I18n.apply(root); // traduit titres et textes marques
 
     els = {
       root,
@@ -167,7 +191,7 @@ window.Studio = (() => {
       btnZoomOut: root.querySelector('#studio-zoom-out'),
       btnZoomFit: root.querySelector('#studio-zoom-fit'),
       zoomLabel: root.querySelector('#studio-zoom-label'),
-      optionsbar: root.querySelector('#studio-optionsbar'),
+      optionsbar: root.querySelector('#studio-opt-tools'),
       toolbar: root.querySelector('#studio-toolbar'),
       stage: root.querySelector('#studio-stage'),
       wrap: root.querySelector('#studio-wrap'),
@@ -179,6 +203,15 @@ window.Studio = (() => {
       btnAddLayer: root.querySelector('#studio-add-layer'),
       opacity: root.querySelector('#studio-opacity'),
       opacityVal: root.querySelector('#studio-opacity-val'),
+      infX: root.querySelector('#sinf-x'),
+      infY: root.querySelector('#sinf-y'),
+      infL: root.querySelector('#sinf-l'),
+      infH: root.querySelector('#sinf-h'),
+      infA: root.querySelector('#sinf-a'),
+      infV: root.querySelector('#sinf-v'),
+      infName: root.querySelector('#sinf-name'),
+      toggleDist: root.querySelector('#studio-toggle-dist'),
+      toggleGrid: root.querySelector('#studio-toggle-grid'),
       statusDoc: root.querySelector('#studio-status-doc'),
       statusHint: root.querySelector('#studio-status-hint'),
       statusLayer: root.querySelector('#studio-status-layer'),
@@ -205,7 +238,7 @@ window.Studio = (() => {
     for (const mode of C.BLEND_MODES) {
       const opt = document.createElement('option');
       opt.value = mode.value;
-      opt.textContent = mode.label;
+      opt.textContent = st(mode.label);
       els.blend.appendChild(opt);
     }
 
@@ -260,6 +293,7 @@ window.Studio = (() => {
     C.compositeTo(ctx, S.doc, { hideLayerId: S.editing && S.editing.layer ? S.editing.layer.id : null });
     renderOverlay();
     drawHud();
+    updateInfoBar();
   }
 
   function renderOverlay() {
@@ -361,46 +395,16 @@ window.Studio = (() => {
       ctx.setLineDash([]);
     }
 
-    // cadre de transformation du calque actif (outil Déplacement)
-    const frame = activeFrame();
-    if (frame && (!S.editing || S.editing.layer !== frame.l)) {
-      const hs = 3.5 * k; // demi-côté des poignées
-      ctx.strokeStyle = '#6ea8ff';
-      ctx.lineWidth = 1.2 * k;
-      ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.moveTo(frame.corners[0].x, frame.corners[0].y);
-      for (let i = 1; i < 4; i += 1) ctx.lineTo(frame.corners[i].x, frame.corners[i].y);
-      ctx.closePath();
-      ctx.stroke();
-      // lien + poignée de rotation
-      ctx.beginPath();
-      ctx.moveTo(frame.edges[0].x, frame.edges[0].y);
-      ctx.lineTo(frame.rotHandle.x, frame.rotHandle.y);
-      ctx.stroke();
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.arc(frame.rotHandle.x, frame.rotHandle.y, 4 * k, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      for (const pt of [...frame.corners, ...frame.edges]) {
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.rect(pt.x - hs, pt.y - hs, hs * 2, hs * 2);
-        ctx.fill();
-        ctx.stroke();
-      }
-    } else {
-      // contour discret du calque texte actif (autres outils)
-      const l = C.activeLayer(S.doc);
-      if (l && l.kind === 'text' && l.visible && (!S.editing || S.editing.layer !== l)) {
-        ctx.strokeStyle = 'rgba(110, 168, 255, 0.65)';
-        ctx.lineWidth = 1 * k;
-        ctx.setLineDash([4 * k, 3 * k]);
-        ctx.strokeRect(l.x, l.y, l.w, l.h);
-        ctx.setLineDash([]);
-      }
+    // aperçu du correcteur de tons directs : voile blanc sur la zone peinte
+    if (S.healPreview) {
+      ctx.save();
+      ctx.globalAlpha = 0.45;
+      ctx.drawImage(S.healPreview.mask, S.healPreview.l.x, S.healPreview.l.y);
+      ctx.restore();
     }
+
+    // NB : le cadre de transformation est dessiné sur le HUD (résolution
+    // écran, non rogné par le canevas) — voir drawTransformFrameHud.
   }
 
   function startAnts() {
@@ -516,6 +520,29 @@ window.Studio = (() => {
     const x1 = Math.min(S.doc.width, Math.ceil((els.stage.clientWidth - ox) / sc));
     const y1 = Math.min(S.doc.height, Math.ceil((els.stage.clientHeight - oy) / sc));
 
+    // grille du document (commutateur de la barre du haut) : pas adaptatif
+    // pour garder au moins ~28 px écran entre deux lignes
+    if (showGrid && x1 > x0 && y1 > y0) {
+      const steps = [5, 10, 25, 50, 100, 250, 500, 1000];
+      const minor = steps.find((s) => s * sc >= 28) || 1000;
+      const drawLines = (step, style) => {
+        ctx.strokeStyle = style;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step) {
+          ctx.moveTo(ox + x * sc, oy + y0 * sc);
+          ctx.lineTo(ox + x * sc, oy + y1 * sc);
+        }
+        for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) {
+          ctx.moveTo(ox + x0 * sc, oy + y * sc);
+          ctx.lineTo(ox + x1 * sc, oy + y * sc);
+        }
+        ctx.stroke();
+      };
+      drawLines(minor, 'rgba(130, 150, 200, 0.16)');
+      drawLines(minor * 5, 'rgba(130, 150, 200, 0.35)');
+    }
+
     if (sc >= GRID_ZOOM && x1 > x0 && y1 > y0) {
       ctx.lineWidth = 1;
       ctx.strokeStyle = 'rgba(128, 128, 128, 0.35)';
@@ -555,6 +582,10 @@ window.Studio = (() => {
       }
     }
 
+    if (showDistances) drawEdgeDistances(ctx, ox, oy, sc);
+    drawGuidesHud(ctx, ox, oy, sc);
+    drawTransformFrameHud(ctx, ox, oy, sc);
+
     // cercle d'impact de la brosse (forme réelle : taille, rondeur, angle)
     if (S.cursorPos && S.brushes[S.tool]) {
       const b = S.brushes[S.tool];
@@ -572,6 +603,446 @@ window.Studio = (() => {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
       ctx.stroke();
     }
+  }
+
+  /* Distances du calque sélectionné aux bords du canevas : repères roses
+     type Photoshop, avec l'écart en pixels — dessinés à la résolution écran. */
+  function drawEdgeDistances(ctx, ox, oy, sc) {
+    const l = C.activeLayer(S.doc);
+    if (!l || !l.visible) return;
+    const f = layerFrame(l);
+    const xs = f.corners.map((c) => c.x);
+    const ys = f.corners.map((c) => c.y);
+    const bb = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+    const midX = (bb.x0 + bb.x1) / 2;
+    const midY = (bb.y0 + bb.y1) / 2;
+    const segs = [
+      { d: bb.x0, ax: 0, ay: midY, bx: bb.x0, by: midY }, // gauche
+      { d: S.doc.width - bb.x1, ax: bb.x1, ay: midY, bx: S.doc.width, by: midY }, // droite
+      { d: bb.y0, ax: midX, ay: 0, bx: midX, by: bb.y0 }, // haut
+      { d: S.doc.height - bb.y1, ax: midX, ay: bb.y1, bx: midX, by: S.doc.height }, // bas
+    ];
+    ctx.save();
+    ctx.font = '600 11px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const s of segs) {
+      if (s.d < 0.5) continue; // le calque atteint ou dépasse ce bord
+      const x1p = ox + s.ax * sc;
+      const y1p = oy + s.ay * sc;
+      const x2p = ox + s.bx * sc;
+      const y2p = oy + s.by * sc;
+      ctx.strokeStyle = '#ff4bd8';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(x1p, y1p);
+      ctx.lineTo(x2p, y2p);
+      // taquets perpendiculaires aux extrémités
+      const vertical = Math.abs(x2p - x1p) < Math.abs(y2p - y1p);
+      const t = 4;
+      if (vertical) {
+        ctx.moveTo(x1p - t, y1p);
+        ctx.lineTo(x1p + t, y1p);
+        ctx.moveTo(x2p - t, y2p);
+        ctx.lineTo(x2p + t, y2p);
+      } else {
+        ctx.moveTo(x1p, y1p - t);
+        ctx.lineTo(x1p, y1p + t);
+        ctx.moveTo(x2p, y2p - t);
+        ctx.lineTo(x2p, y2p + t);
+      }
+      ctx.stroke();
+      const label = `${Math.round(s.d)} px`;
+      const mx = (x1p + x2p) / 2;
+      const my = (y1p + y2p) / 2;
+      const w = ctx.measureText(label).width + 10;
+      ctx.fillStyle = '#ff4bd8';
+      ctx.fillRect(mx - w / 2, my - 9, w, 18);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, mx, my + 0.5);
+    }
+    ctx.restore();
+  }
+
+  /* Cadre de transformation du calque actif, dessiné à la résolution écran
+     sur le HUD : il reste visible et manipulable même quand le calque
+     déborde du canevas (image plus grande que le document). */
+  function drawTransformFrameHud(ctx, ox, oy, sc) {
+    const frame = activeFrame();
+    const P = (pt) => ({ x: ox + pt.x * sc, y: oy + pt.y * sc });
+    if (frame && (!S.editing || S.editing.layer !== frame.l)) {
+      const hs = 3.5;
+      ctx.strokeStyle = '#6ea8ff';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      const c0 = P(frame.corners[0]);
+      ctx.moveTo(c0.x, c0.y);
+      for (let i = 1; i < 4; i += 1) {
+        const c = P(frame.corners[i]);
+        ctx.lineTo(c.x, c.y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      // lien + poignée de rotation
+      const e0 = P(frame.edges[0]);
+      const rh = P(frame.rotHandle);
+      ctx.beginPath();
+      ctx.moveTo(e0.x, e0.y);
+      ctx.lineTo(rh.x, rh.y);
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(rh.x, rh.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      for (const pt of [...frame.corners, ...frame.edges]) {
+        const s = P(pt);
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.rect(s.x - hs, s.y - hs, hs * 2, hs * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    } else {
+      // contour discret du calque texte actif (autres outils)
+      const l = C.activeLayer(S.doc);
+      if (l && l.kind === 'text' && l.visible && (!S.editing || S.editing.layer !== l)) {
+        ctx.strokeStyle = 'rgba(110, 168, 255, 0.65)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(ox + l.x * sc, oy + l.y * sc, l.w * sc, l.h * sc);
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  /* ================= Repères de mesure (règle, compas, cercle) =================
+     Objets temporaires dessinés sur le HUD : jamais dans le rendu ni dans
+     l'enregistrement, manipulables avec l'outil Repères, effaçables d'un clic. */
+
+  const GUIDE_COLOR = '#2fc6e8';
+  const GUIDE_DARK = 'rgba(0, 30, 40, 0.6)';
+
+  function guideLabel(ctx, text, x, y) {
+    const w = ctx.measureText(text).width + 10;
+    ctx.fillStyle = GUIDE_COLOR;
+    ctx.fillRect(x - w / 2, y - 9, w, 18);
+    ctx.fillStyle = '#04303c';
+    ctx.fillText(text, x, y + 0.5);
+  }
+
+  function guideStroke(ctx, draw) {
+    ctx.lineWidth = 2.6;
+    ctx.strokeStyle = GUIDE_DARK;
+    draw();
+    ctx.stroke();
+    ctx.lineWidth = 1.3;
+    ctx.strokeStyle = GUIDE_COLOR;
+    draw();
+    ctx.stroke();
+  }
+
+  function guideHandleDot(ctx, x, y) {
+    ctx.beginPath();
+    ctx.arc(x, y, 3.6, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.lineWidth = 1.3;
+    ctx.strokeStyle = GUIDE_COLOR;
+    ctx.stroke();
+  }
+
+  function drawGuidesHud(ctx, ox, oy, sc) {
+    if (!S.guides || S.guides.length === 0) return;
+    const P = (pt) => ({ x: ox + pt.x * sc, y: oy + pt.y * sc });
+    ctx.save();
+    ctx.font = '600 11px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const g of S.guides) {
+      if (g.kind === 'ruler') {
+        const a = P(g.a);
+        const b = P(g.b);
+        const len = Math.hypot(g.b.x - g.a.x, g.b.y - g.a.y);
+        const slen = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        const nx = -(b.y - a.y) / slen; // normale écran
+        const ny = (b.x - a.x) / slen;
+        guideStroke(ctx, () => {
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          // graduations le long de la règle
+          const steps = [5, 10, 25, 50, 100, 250, 500];
+          const step = steps.find((s) => s * sc >= 9) || 1000;
+          for (let d = step; d < len; d += step) {
+            const t = d / len;
+            const px = a.x + (b.x - a.x) * t;
+            const py = a.y + (b.y - a.y) * t;
+            const tick = (d / step) % 5 === 0 ? 7 : 4;
+            ctx.moveTo(px, py);
+            ctx.lineTo(px + nx * tick, py + ny * tick);
+          }
+        });
+        guideHandleDot(ctx, a.x, a.y);
+        guideHandleDot(ctx, b.x, b.y);
+        const ang = (Math.atan2(g.b.y - g.a.y, g.b.x - g.a.x) * 180) / Math.PI;
+        guideLabel(
+          ctx,
+          `${Math.round(len)} px · ${(Math.round(ang * 10) / 10).toLocaleString('fr-FR')}°`,
+          (a.x + b.x) / 2 - nx * 16,
+          (a.y + b.y) / 2 - ny * 16
+        );
+      } else if (g.kind === 'angle') {
+        const o = P(g.o);
+        const a = P(g.a);
+        const b = P(g.b);
+        const angA = Math.atan2(a.y - o.y, a.x - o.x);
+        const angB = Math.atan2(b.y - o.y, b.x - o.x);
+        guideStroke(ctx, () => {
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(o.x, o.y);
+          ctx.lineTo(b.x, b.y);
+        });
+        let sweep = angB - angA;
+        while (sweep <= -Math.PI) sweep += Math.PI * 2;
+        while (sweep > Math.PI) sweep -= Math.PI * 2;
+        guideStroke(ctx, () => {
+          ctx.beginPath();
+          ctx.arc(o.x, o.y, 26, angA, angA + sweep, sweep < 0);
+        });
+        guideHandleDot(ctx, o.x, o.y);
+        guideHandleDot(ctx, a.x, a.y);
+        guideHandleDot(ctx, b.x, b.y);
+        const bis = angA + sweep / 2;
+        guideLabel(
+          ctx,
+          `${(Math.round(Math.abs((sweep * 180) / Math.PI) * 10) / 10).toLocaleString('fr-FR')}°`,
+          o.x + Math.cos(bis) * 46,
+          o.y + Math.sin(bis) * 46
+        );
+      } else if (g.kind === 'circle') {
+        const c = P(g.c);
+        const rs = g.r * sc;
+        guideStroke(ctx, () => {
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, rs, 0, Math.PI * 2);
+        });
+        guideStroke(ctx, () => {
+          ctx.beginPath();
+          ctx.moveTo(c.x - 5, c.y);
+          ctx.lineTo(c.x + 5, c.y);
+          ctx.moveTo(c.x, c.y - 5);
+          ctx.lineTo(c.x, c.y + 5);
+        });
+        guideHandleDot(ctx, c.x + rs, c.y);
+        guideLabel(ctx, `R ${Math.round(g.r)} px · Ø ${Math.round(g.r * 2)} px`, c.x, c.y - 16);
+      }
+    }
+    ctx.restore();
+  }
+
+  function viewCenterDoc() {
+    const sr = els.stage.getBoundingClientRect();
+    const cr = els.canvas.getBoundingClientRect();
+    return {
+      x: (sr.left + sr.width / 2 - cr.left) / S.scale,
+      y: (sr.top + sr.height / 2 - cr.top) / S.scale,
+    };
+  }
+
+  function addGuide(kind) {
+    const c = viewCenterDoc();
+    const u = 120 / S.scale; // taille de départ : constante à l'écran
+    if (kind === 'ruler') {
+      S.guides.push({ kind, a: { x: c.x - u, y: c.y }, b: { x: c.x + u, y: c.y } });
+    } else if (kind === 'angle') {
+      S.guides.push({
+        kind,
+        o: { x: c.x, y: c.y + u / 2 },
+        a: { x: c.x - u, y: c.y - u / 2 },
+        b: { x: c.x + u, y: c.y - u / 2 },
+      });
+    } else {
+      S.guides.push({ kind: 'circle', c: { x: c.x, y: c.y }, r: u * 0.75 });
+    }
+    drawHud();
+    status('Repère ajouté — glissez ses poignées ; « Tout effacer » le retire (jamais dans le rendu).');
+  }
+
+  function distToSegment(p, a, b) {
+    const vx = b.x - a.x;
+    const vy = b.y - a.y;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / (vx * vx + vy * vy || 1e-6)));
+    return Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t));
+  }
+
+  let guideDrag = null;
+
+  function guideHitAt(p) {
+    const tol = 10 / S.scale;
+    const near = (pt) => Math.hypot(p.x - pt.x, p.y - pt.y) <= tol;
+    for (let i = S.guides.length - 1; i >= 0; i -= 1) {
+      const g = S.guides[i];
+      if (g.kind === 'ruler') {
+        if (near(g.a)) return { g, part: 'a' };
+        if (near(g.b)) return { g, part: 'b' };
+        if (distToSegment(p, g.a, g.b) <= tol) return { g, part: 'body' };
+      } else if (g.kind === 'angle') {
+        if (near(g.o)) return { g, part: 'o' };
+        if (near(g.a)) return { g, part: 'a' };
+        if (near(g.b)) return { g, part: 'b' };
+      } else if (g.kind === 'circle') {
+        if (near(g.c)) return { g, part: 'c' };
+        if (Math.abs(Math.hypot(p.x - g.c.x, p.y - g.c.y) - g.r) <= tol) return { g, part: 'r' };
+      }
+    }
+    return null;
+  }
+
+  function guideDown(p) {
+    const hit = guideHitAt(p);
+    if (!hit) return false;
+    guideDrag = { ...hit, start: p, orig: JSON.parse(JSON.stringify(hit.g)) };
+    return true;
+  }
+
+  function guideMove(p) {
+    if (!guideDrag) return;
+    const { g, part, start, orig } = guideDrag;
+    const dx = p.x - start.x;
+    const dy = p.y - start.y;
+    if (part === 'body') {
+      g.a = { x: orig.a.x + dx, y: orig.a.y + dy };
+      g.b = { x: orig.b.x + dx, y: orig.b.y + dy };
+    } else if (part === 'o') {
+      g.o = { x: orig.o.x + dx, y: orig.o.y + dy };
+      g.a = { x: orig.a.x + dx, y: orig.a.y + dy };
+      g.b = { x: orig.b.x + dx, y: orig.b.y + dy };
+    } else if (part === 'c') {
+      g.c = { x: orig.c.x + dx, y: orig.c.y + dy };
+    } else if (part === 'r') {
+      g.r = Math.max(2, Math.hypot(p.x - g.c.x, p.y - g.c.y));
+    } else {
+      g[part] = { x: orig[part].x + dx, y: orig[part].y + dy };
+    }
+    drawHud();
+  }
+
+  function guideUp() {
+    guideDrag = null;
+  }
+
+  function buildGuideOptions() {
+    const box = document.createElement('div');
+    box.className = 'studio-opt-group';
+    const mk = (label, fn) => {
+      const b = document.createElement('button');
+      b.className = 'studio-btn';
+      b.textContent = st(label);
+      b.addEventListener('click', fn);
+      return b;
+    };
+    box.append(
+      mk('Règle', () => addGuide('ruler')),
+      mk('Compas', () => addGuide('angle')),
+      mk('Cercle', () => addGuide('circle')),
+      mk('Tout effacer', () => {
+        S.guides = [];
+        drawHud();
+      })
+    );
+    return box;
+  }
+
+  /* Lecture en direct dans la barre d'options : position, dimensions, angle,
+     inclinaison et nom de l'objet sélectionné. Les champs sont éditables ;
+     un champ en cours de saisie n'est jamais écrasé. */
+  function updateInfoBar() {
+    if (!S) return;
+    const l = C.activeLayer(S.doc);
+    const fields = [els.infX, els.infY, els.infL, els.infH, els.infA, els.infV];
+    const put = (input, value) => {
+      input.disabled = !l;
+      if (document.activeElement === input) return;
+      input.value = l ? String(value) : '';
+    };
+    if (!l) {
+      for (const input of fields) put(input, '');
+      els.infName.textContent = '–';
+      return;
+    }
+    const f = layerFrame(l);
+    const xs = f.corners.map((c) => c.x);
+    const ys = f.corners.map((c) => c.y);
+    const x0 = Math.min(...xs);
+    const y0 = Math.min(...ys);
+    const deg = (rad) => {
+      const d = ((((rad * 180) / Math.PI + 180) % 360) + 360) % 360 - 180;
+      return Math.round(d * 10) / 10;
+    };
+    put(els.infX, Math.round(x0));
+    put(els.infY, Math.round(y0));
+    put(els.infL, Math.round(Math.max(...xs) - x0));
+    put(els.infH, Math.round(Math.max(...ys) - y0));
+    put(els.infA, deg(f.t.rot || 0));
+    put(els.infV, deg(Math.atan(f.t.k || 0)));
+    els.infName.textContent = l.name;
+  }
+
+  /* Application d'une valeur saisie dans la barre d'infos au calque actif. */
+  function applyInfoEdit(field, raw) {
+    const l = C.activeLayer(S.doc);
+    if (!l) return;
+    const value = Number(String(raw).replace(',', '.'));
+    if (!Number.isFinite(value)) {
+      updateInfoBar();
+      return;
+    }
+    if (l.kind === 'text' && field !== 'x' && field !== 'y') {
+      status('Sur un calque de texte : seuls X et Y se modifient ici (corps via la barre Texte).');
+      updateInfoBar();
+      return;
+    }
+    const before = C.snapshotDoc(S.doc);
+    const f = layerFrame(l);
+    const xs = f.corners.map((c) => c.x);
+    const ys = f.corners.map((c) => c.y);
+    const bb = {
+      x0: Math.min(...xs),
+      y0: Math.min(...ys),
+      w: Math.max(...xs) - Math.min(...xs),
+      h: Math.max(...ys) - Math.min(...ys),
+    };
+    const t = { sx: 1, sy: 1, rot: 0, k: 0, ...(l.tx || {}) };
+    if (field === 'x') {
+      l.x += Math.round(value - bb.x0);
+    } else if (field === 'y') {
+      l.y += Math.round(value - bb.y0);
+    } else if (field === 'l' || field === 'h') {
+      const current = field === 'l' ? bb.w : bb.h;
+      if (value >= 1 && current > 0) {
+        const factor = value / current;
+        l.tx = field === 'l' ? { ...t, sx: t.sx * factor } : { ...t, sy: t.sy * factor };
+      }
+    } else if (field === 'a') {
+      l.tx = { ...t, rot: (value * Math.PI) / 180 };
+    } else if (field === 'v') {
+      l.tx = { ...t, k: Math.tan((Math.max(-80, Math.min(80, value)) * Math.PI) / 180) };
+    }
+    if (
+      l.tx &&
+      Math.abs(l.tx.sx - 1) < 1e-6 &&
+      Math.abs(l.tx.sy - 1) < 1e-6 &&
+      Math.abs(l.tx.rot) < 1e-6 &&
+      Math.abs(l.tx.k) < 1e-6
+    ) {
+      l.tx = null;
+    }
+    commit(before);
+    requestRender();
+    updateInfoBar();
   }
 
   /* ================= Façade éditeur (donnée aux outils) ================= */
@@ -719,7 +1190,7 @@ window.Studio = (() => {
     const mk = (label, title, fn, primary) => {
       const b = document.createElement('button');
       b.className = primary ? 'studio-btn studio-btn-primary' : 'studio-btn';
-      b.textContent = label;
+      b.textContent = st(label);
       b.title = title;
       b.disabled = !has;
       b.addEventListener('click', fn);
@@ -923,6 +1394,172 @@ window.Studio = (() => {
 
   function endBrushStroke(stroke) {
     commit(stroke.before);
+  }
+
+  /* ================= Correcteur de tons directs =================
+     On peint un masque sur le défaut (voile blanc à l'écran) ; au relâcher,
+     la zone masquée est reconstruite par diffusion depuis son voisinage
+     (inpainting par propagation de front puis lissage) — les poussières,
+     boutons et petites rayures se fondent dans leur entourage. */
+
+  function beginHealStroke(l) {
+    const brush = { ...S.brushes.heal };
+    const before = C.snapshotDoc(S.doc);
+    rasterizeIfTransformed(l);
+    const mask = C.createCanvas(l.canvas.width, l.canvas.height);
+    return {
+      l,
+      brush,
+      mask,
+      tip: makeTipCanvas(brush, '255,255,255'),
+      spacing: Math.max(1, brush.size * 0.15),
+      rest: 0,
+      before,
+    };
+  }
+
+  function healStampSegment(stroke, a, b) {
+    const ctx = stroke.mask.getContext('2d');
+    ctx.save();
+    ctx.translate(-stroke.l.x, -stroke.l.y);
+    if (S.selection) clipSelection(ctx);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist === 0) {
+      stampAt(ctx, stroke, a.x, a.y);
+    } else {
+      let t = stroke.rest;
+      while (t <= dist) {
+        stampAt(ctx, stroke, a.x + (dx * t) / dist, a.y + (dy * t) / dist);
+        t += stroke.spacing;
+      }
+      stroke.rest = t - dist;
+    }
+    ctx.restore();
+    S.healPreview = stroke;
+    renderOverlay();
+  }
+
+  function endHealStroke(stroke) {
+    S.healPreview = null;
+    healApply(stroke);
+    commit(stroke.before);
+    requestRender();
+  }
+
+  function healApply({ l, mask }) {
+    const w = mask.width;
+    const h = mask.height;
+    const md = mask.getContext('2d').getImageData(0, 0, w, h).data;
+    // boîte englobante de la zone peinte
+    let x0 = w;
+    let y0 = h;
+    let x1 = -1;
+    let y1 = -1;
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        if (md[(y * w + x) * 4 + 3] > 24) {
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+        }
+      }
+    }
+    if (x1 < 0) return;
+    const margin = 24;
+    x0 = Math.max(0, x0 - margin);
+    y0 = Math.max(0, y0 - margin);
+    x1 = Math.min(w - 1, x1 + margin);
+    y1 = Math.min(h - 1, y1 + margin);
+    const rw = x1 - x0 + 1;
+    const rh = y1 - y0 + 1;
+
+    const lctx = l.canvas.getContext('2d');
+    const img = lctx.getImageData(x0, y0, rw, rh);
+    const d = img.data;
+    const unknown = new Uint8Array(rw * rh);
+    let list = [];
+    for (let y = 0; y < rh; y += 1) {
+      for (let x = 0; x < rw; x += 1) {
+        if (md[((y + y0) * w + (x + x0)) * 4 + 3] > 24) {
+          unknown[y * rw + x] = 1;
+          list.push(y * rw + x);
+        }
+      }
+    }
+    const masked = list.slice(); // pour le lissage final
+
+    // propagation de front : chaque tour remplit les pixels inconnus qui
+    // touchent des pixels connus (moyenne des voisins), du bord vers le cœur
+    while (list.length) {
+      const next = [];
+      const updates = [];
+      for (const i of list) {
+        const px = i % rw;
+        const py = (i / rw) | 0;
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let a = 0;
+        let n = 0;
+        for (let yy = Math.max(0, py - 1); yy <= Math.min(rh - 1, py + 1); yy += 1) {
+          for (let xx = Math.max(0, px - 1); xx <= Math.min(rw - 1, px + 1); xx += 1) {
+            const j = yy * rw + xx;
+            if (unknown[j]) continue;
+            const o = j * 4;
+            r += d[o];
+            g += d[o + 1];
+            b += d[o + 2];
+            a += d[o + 3];
+            n += 1;
+          }
+        }
+        if (n === 0) next.push(i);
+        else updates.push([i, r / n, g / n, b / n, a / n]);
+      }
+      if (updates.length === 0) break; // masque isolé (aucun voisinage connu)
+      for (const [i, r, g, b, a] of updates) {
+        const o = i * 4;
+        d[o] = r;
+        d[o + 1] = g;
+        d[o + 2] = b;
+        d[o + 3] = a;
+        unknown[i] = 0;
+      }
+      list = next;
+    }
+
+    // lissage de membrane : quelques itérations de moyenne 4-voisins sur la
+    // zone reconstruite, pour fondre les raccords
+    for (let it = 0; it < 6; it += 1) {
+      for (const i of masked) {
+        const px = i % rw;
+        const py = (i / rw) | 0;
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let a = 0;
+        let n = 0;
+        for (const [xx, yy] of [[px - 1, py], [px + 1, py], [px, py - 1], [px, py + 1]]) {
+          if (xx < 0 || yy < 0 || xx >= rw || yy >= rh) continue;
+          const o = (yy * rw + xx) * 4;
+          r += d[o];
+          g += d[o + 1];
+          b += d[o + 2];
+          a += d[o + 3];
+          n += 1;
+        }
+        if (n === 0) continue;
+        const o = i * 4;
+        d[o] = r / n;
+        d[o + 1] = g / n;
+        d[o + 2] = b / n;
+        d[o + 3] = a / n;
+      }
+    }
+    lctx.putImageData(img, x0, y0);
   }
 
   /* ================= Tampon de duplication =================
@@ -1548,7 +2185,7 @@ window.Studio = (() => {
   let modalState = null;
 
   function openModal({ title, fields, onChange, onOk, onCancel }) {
-    els.modalTitle.textContent = title;
+    els.modalTitle.textContent = st(title);
     els.modalFields.innerHTML = '';
     const params = {};
     const setters = {};
@@ -1561,7 +2198,7 @@ window.Studio = (() => {
       row.className = 'studio-modal-row';
       const lab = document.createElement('span');
       lab.className = 'studio-modal-label';
-      lab.textContent = f.label;
+      lab.textContent = st(f.label);
       row.appendChild(lab);
       if (f.type === 'select') {
         const sel = document.createElement('select');
@@ -2428,7 +3065,7 @@ window.Studio = (() => {
       const b = document.createElement('button');
       b.className = 'studio-menu-item';
       const parts = it.label.split('\t');
-      b.textContent = parts[0];
+      b.textContent = st(parts[0]);
       if (parts[1]) {
         const kbd = document.createElement('span');
         kbd.className = 'studio-menu-kbd';
@@ -2464,13 +3101,16 @@ window.Studio = (() => {
     const { w, h } = C.layerNaturalSize(l);
     const cx = l.x + w / 2;
     const cy = l.y + h / 2;
-    const t = l.tx || { sx: 1, sy: 1, rot: 0 };
+    const t = l.tx || { sx: 1, sy: 1, rot: 0, k: 0 };
     const cos = Math.cos(t.rot);
     const sin = Math.sin(t.rot);
-    const map = (lx, ly) => ({
-      x: cx + lx * t.sx * cos - ly * t.sy * sin,
-      y: cy + lx * t.sx * sin + ly * t.sy * cos,
-    });
+    const shear = t.k || 0;
+    // ordre : échelle, inclinaison (cisaillement), rotation — voir core.js
+    const map = (lx, ly) => {
+      const xs = lx * t.sx + shear * (ly * t.sy);
+      const ys = ly * t.sy;
+      return { x: cx + xs * cos - ys * sin, y: cy + xs * sin + ys * cos };
+    };
     const corners = [map(-w / 2, -h / 2), map(w / 2, -h / 2), map(w / 2, h / 2), map(-w / 2, h / 2)];
     const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     const edges = [
@@ -2520,9 +3160,40 @@ window.Studio = (() => {
     const dy = p.y - f.cy;
     const cos = Math.cos(f.t.rot);
     const sin = Math.sin(f.t.rot);
+    const xr = dx * cos + dy * sin;
+    const yr = -dx * sin + dy * cos;
     return {
-      x: (dx * cos + dy * sin) / (f.t.sx || 1e-6),
-      y: (-dx * sin + dy * cos) / (f.t.sy || 1e-6),
+      x: (xr - (f.t.k || 0) * yr) / (f.t.sx || 1e-6),
+      y: yr / (f.t.sy || 1e-6),
+    };
+  }
+
+  /* Matrice linéaire 2×2 de la transformation (colonnes = images des axes
+     locaux), et décomposition inverse : toute matrice inversible se ramène
+     à rotation ∘ inclinaison ∘ échelle (décomposition QR). */
+  function txMatrix(t) {
+    const cos = Math.cos(t.rot);
+    const sin = Math.sin(t.rot);
+    const k = t.k || 0;
+    return {
+      a: cos * t.sx,
+      b: sin * t.sx,
+      c: cos * k * t.sy - sin * t.sy,
+      d: sin * k * t.sy + cos * t.sy,
+    };
+  }
+
+  function matrixTx(m) {
+    const len = Math.hypot(m.a, m.b) || 1e-6;
+    const cos = m.a / len;
+    const sin = m.b / len;
+    const r12 = cos * m.c + sin * m.d;
+    const sy = -sin * m.c + cos * m.d;
+    return {
+      sx: len,
+      sy: sy || 1e-6,
+      rot: Math.atan2(sin, cos),
+      k: Math.abs(sy) > 1e-6 ? r12 / sy : 0,
     };
   }
 
@@ -2577,7 +3248,7 @@ window.Studio = (() => {
       handle,
       f,
       before: C.snapshotDoc(S.doc),
-      orig: { ...(f.l.tx || { sx: 1, sy: 1, rot: 0 }) },
+      orig: { k: 0, ...(f.l.tx || { sx: 1, sy: 1, rot: 0 }) },
       origFont: f.l.kind === 'text' ? f.l.fontSize : 0,
       startAngle: Math.atan2(p.y - f.cy, p.x - f.cx),
       startDist: Math.max(1e-3, Math.hypot(p.x - f.cx, p.y - f.cy)),
@@ -2590,15 +3261,53 @@ window.Studio = (() => {
     return true;
   }
 
-  function updateTransform(p, shiftKey, altKey) {
+  function updateTransform(p, shiftKey, altKey, ctrlKey) {
     const g = transformGesture;
     if (!g) return;
     const l = g.f.l;
+    const origK = g.orig.k || 0;
 
     if (g.handle.kind === 'rotate') {
       let rot = g.orig.rot + (Math.atan2(p.y - g.f.cy, p.x - g.f.cx) - g.startAngle);
       if (shiftKey) rot = Math.round(rot / (Math.PI / 12)) * (Math.PI / 12); // pas de 15°
-      l.tx = { sx: g.orig.sx, sy: g.orig.sy, rot };
+      l.tx = { sx: g.orig.sx, sy: g.orig.sy, rot, k: origK };
+      requestRender();
+      return;
+    }
+
+    // Ctrl : déformation (comme Photoshop) — coin : distorsion, l'ancre et
+    // le pointeur commandent la matrice ; bord : inclinaison pure, le
+    // déplacement ne compte que le long du bord. Calques raster seulement.
+    if (ctrlKey && g.anchor && l.kind === 'raster') {
+      const M0 = txMatrix(g.orig);
+      const v = { x: g.dragLocal.x - g.anchorLocal.x, y: g.dragLocal.y - g.anchorLocal.y };
+      const m0v = { x: M0.a * v.x + M0.c * v.y, y: M0.b * v.x + M0.d * v.y };
+      let delta = { x: p.x - g.anchor.x - m0v.x, y: p.y - g.anchor.y - m0v.y };
+      if (g.handle.kind === 'edge') {
+        const e = g.handle.index % 2 === 1 ? { x: 0, y: 1 } : { x: 1, y: 0 }; // direction locale du bord
+        const ex = M0.a * e.x + M0.c * e.y;
+        const ey = M0.b * e.x + M0.d * e.y;
+        const len = Math.hypot(ex, ey) || 1e-6;
+        const dot = (delta.x * ex + delta.y * ey) / len;
+        delta = { x: (ex / len) * dot, y: (ey / len) * dot };
+      }
+      // mise à jour de rang 1 : M·v suit exactement le pointeur, les
+      // vecteurs orthogonaux à v (dans le repère local) sont préservés
+      const vv = v.x * v.x + v.y * v.y || 1e-6;
+      const t = matrixTx({
+        a: M0.a + (delta.x * v.x) / vv,
+        c: M0.c + (delta.x * v.y) / vv,
+        b: M0.b + (delta.y * v.x) / vv,
+        d: M0.d + (delta.y * v.y) / vv,
+      });
+      if (Math.abs(t.sx) < 0.02 || Math.abs(t.sy) < 0.02 || Math.abs(t.k) > 8) return;
+      l.tx = t;
+      // l'ancre reste exactement immobile
+      const M = txMatrix(t);
+      const ax = M.a * g.anchorLocal.x + M.c * g.anchorLocal.y;
+      const ay = M.b * g.anchorLocal.x + M.d * g.anchorLocal.y;
+      l.x = Math.round(g.anchor.x - ax - g.f.w / 2);
+      l.y = Math.round(g.anchor.y - ay - g.f.h / 2);
       requestRender();
       return;
     }
@@ -2630,19 +3339,19 @@ window.Studio = (() => {
           const lp = toLocal({ ...g.f, t: { ...g.orig, sx: 1, sy: 1 } }, p);
           const sx = g.startLocal.x * g.orig.sx ? lp.x / (g.startLocal.x * g.orig.sx) : 1;
           const sy = g.startLocal.y * g.orig.sy ? lp.y / (g.startLocal.y * g.orig.sy) : 1;
-          l.tx = { sx: clampScale(g.orig.sx * sx), sy: clampScale(g.orig.sy * sy), rot: g.orig.rot };
+          l.tx = { sx: clampScale(g.orig.sx * sx), sy: clampScale(g.orig.sy * sy), rot: g.orig.rot, k: origK };
         } else {
-          l.tx = { sx: clampScale(g.orig.sx * s), sy: clampScale(g.orig.sy * s), rot: g.orig.rot };
+          l.tx = { sx: clampScale(g.orig.sx * s), sy: clampScale(g.orig.sy * s), rot: g.orig.rot, k: origK };
         }
       } else {
         const lp = toLocal({ ...g.f, t: { ...g.orig, sx: 1, sy: 1 } }, p);
         const horizontal = g.handle.index % 2 === 1;
         if (horizontal) {
           const ratio = g.startLocal.x * g.orig.sx ? lp.x / (g.startLocal.x * g.orig.sx) : 1;
-          l.tx = { sx: clampScale(g.orig.sx * ratio), sy: g.orig.sy, rot: g.orig.rot };
+          l.tx = { sx: clampScale(g.orig.sx * ratio), sy: g.orig.sy, rot: g.orig.rot, k: origK };
         } else {
           const ratio = g.startLocal.y * g.orig.sy ? lp.y / (g.startLocal.y * g.orig.sy) : 1;
-          l.tx = { sx: g.orig.sx, sy: clampScale(g.orig.sy * ratio), rot: g.orig.rot };
+          l.tx = { sx: g.orig.sx, sy: clampScale(g.orig.sy * ratio), rot: g.orig.rot, k: origK };
         }
       }
       requestRender();
@@ -2678,11 +3387,12 @@ window.Studio = (() => {
     sx = clampScale(sx);
     sy = clampScale(sy);
     // replace le centre pour que l'ancre reste exactement immobile
-    const ax = g.anchorLocal.x * sx;
+    // (l'inclinaison éventuelle fait partie de la position de l'ancre)
+    const ax = g.anchorLocal.x * sx + origK * (g.anchorLocal.y * sy);
     const ay = g.anchorLocal.y * sy;
     const ncx = g.anchor.x - (ax * cos - ay * sin);
     const ncy = g.anchor.y - (ax * sin + ay * cos);
-    l.tx = { sx, sy, rot };
+    l.tx = { sx, sy, rot, k: origK };
     l.x = Math.round(ncx - g.f.w / 2);
     l.y = Math.round(ncy - g.f.h / 2);
     requestRender();
@@ -2706,7 +3416,8 @@ window.Studio = (() => {
       l.tx &&
       Math.abs(l.tx.sx - 1) < 1e-3 &&
       Math.abs(l.tx.sy - 1) < 1e-3 &&
-      Math.abs(l.tx.rot) < 1e-3
+      Math.abs(l.tx.rot) < 1e-3 &&
+      Math.abs(l.tx.k || 0) < 1e-3
     ) {
       l.tx = null; // revenu à l'identité : on nettoie
     }
@@ -3281,7 +3992,7 @@ window.Studio = (() => {
     box.className = 'studio-opt-group';
     const lab = document.createElement('span');
     lab.className = 'studio-opt-label';
-    lab.textContent = label;
+    lab.textContent = st(label);
     const log = scale === 'log';
     const toPos = (v) =>
       log ? Math.round((Math.log(Math.max(min, v) / min) / Math.log(max / min)) * 1000) : v;
@@ -3313,6 +4024,7 @@ window.Studio = (() => {
     buildPickerReadout,
     setCursor: (cursor) => {
       els.canvas.style.cursor = cursor;
+      els.stage.style.cursor = cursor === 'default' ? '' : cursor;
     },
     transformHandleAt,
     insideActiveFrame,
@@ -3363,6 +4075,14 @@ window.Studio = (() => {
     brushStampSegment,
     endBrushStroke,
     buildBrushOptions,
+    beginHealStroke,
+    healStampSegment,
+    endHealStroke,
+    guideDown,
+    guideMove,
+    guideUp,
+    guideHitAt,
+    buildGuideOptions,
     bucketFill,
     buildBucketOptions,
     magicErase,
@@ -3424,7 +4144,8 @@ window.Studio = (() => {
       b.classList.toggle('is-active', b.dataset.tool === id);
     }
     els.canvas.style.cursor = tool.cursor || 'default';
-    status(tool.hint || '');
+    els.stage.style.cursor = tool.cursor && tool.cursor !== 'default' ? tool.cursor : '';
+    status(st(tool.hint || ''));
     updateOptionsBar();
     updateStatus();
     drawHud();
@@ -3436,7 +4157,7 @@ window.Studio = (() => {
     const tool = currentTool();
     const name = document.createElement('span');
     name.className = 'studio-opt-toolname';
-    name.innerHTML = svgIcon(tool.icon, 13) + tool.label.split('—')[0].trim();
+    name.innerHTML = svgIcon(tool.icon, 13) + st(tool.label).split('—')[0].trim();
     els.optionsbar.appendChild(name);
     if (tool.options) {
       els.optionsbar.appendChild(tool.options(ed));
@@ -3455,10 +4176,11 @@ window.Studio = (() => {
 
   function onPointerDown(e) {
     if (e.button !== 0) return;
+    if (e.target === els.textEditor) return; // édition de texte en cours
     // empêche le mousedown par défaut de voler le focus (champ de texte)
     e.preventDefault();
     try {
-      els.canvas.setPointerCapture(e.pointerId);
+      els.stage.setPointerCapture(e.pointerId);
     } catch {
       // pointeur synthétique (tests)
     }
@@ -3786,6 +4508,22 @@ window.Studio = (() => {
     layersChanged();
   }
 
+  /** Supprime le calque actif (touche Suppr sans sélection). */
+  function deleteActiveLayer() {
+    const l = C.activeLayer(S.doc);
+    if (!l) return;
+    if (S.doc.layers.length <= 1) {
+      status('Impossible de supprimer le dernier calque du montage.');
+      return;
+    }
+    const before = C.snapshotDoc(S.doc);
+    if (C.removeLayer(S.doc, l.id)) {
+      commit(before);
+      layersChanged();
+      status(`Calque « ${l.name} » supprimé.`);
+    }
+  }
+
   function updateStatus() {
     if (!S) return;
     els.statusDoc.textContent = `${S.doc.width} × ${S.doc.height} px · ${S.meta.dpi} DPI · ${
@@ -3793,7 +4531,8 @@ window.Studio = (() => {
     } · zoom ${Math.round(S.scale * 100)} %`;
     const l = C.activeLayer(S.doc);
     const tool = currentTool();
-    els.statusLayer.textContent = `${l ? l.name : '–'} · outil : ${tool ? tool.label.split('—')[0].split('(')[0].trim() : ''}`;
+    els.statusLayer.textContent = `${l ? l.name : '–'} · ${st('outil')} : ${tool ? st(tool.label).split('—')[0].split('(')[0].trim() : ''}`;
+    updateInfoBar();
   }
 
   /* ================= Enregistrement ================= */
@@ -3848,7 +4587,7 @@ window.Studio = (() => {
     } else if ((e.ctrlKey || e.metaKey) && key === 't') {
       e.preventDefault();
       chooseTool('move');
-      status('Transformation : poignées = échelle (Maj = libre), poignée du haut = rotation (Maj = 15°).');
+      status('Transformation : poignées = échelle (Maj = libre, Ctrl = déformer / incliner), poignée du haut = rotation (Maj = 15°).');
     } else if ((e.ctrlKey || e.metaKey) && key === 'j') {
       e.preventDefault();
       selectionToLayer(false);
@@ -3889,7 +4628,9 @@ window.Studio = (() => {
     } else if (key === '1' && !e.ctrlKey && !e.metaKey) {
       setZoom(1);
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      // une sélection prime (on efface dedans) ; sinon le calque entier part
       if (S.selection) eraseSelection();
+      else deleteActiveLayer();
     } else if (e.key === 'Escape') {
       if (modalState) {
         closeModal(false);
@@ -3947,12 +4688,66 @@ window.Studio = (() => {
     els.btnZoomFit.addEventListener('click', zoomFit);
     els.zoomLabel.addEventListener('click', () => setZoom(1));
 
-    els.canvas.addEventListener('pointerdown', onPointerDown);
-    els.canvas.addEventListener('pointermove', onPointerMove);
-    els.canvas.addEventListener('pointerup', onPointerUp);
-    els.canvas.addEventListener('pointercancel', onPointerUp);
-    els.canvas.addEventListener('dblclick', onDblClick);
-    els.canvas.addEventListener('pointerleave', () => {
+    // Changement de langue : re-balaye les textes du Studio et reconstruit
+    // ce qui est généré dynamiquement (barre d'options, modes de fusion…)
+    if (window.I18n) {
+      window.I18n.onChange(() => {
+        if (!els) return;
+        window.I18n.apply(els.root);
+        C.BLEND_MODES.forEach((mode, i) => {
+          if (els.blend.options[i]) els.blend.options[i].textContent = st(mode.label);
+        });
+        if (S) {
+          updateOptionsBar();
+          updateStatus();
+        }
+      });
+    }
+
+    // Barre d'infos éditable : chaque champ applique sa valeur au calque
+    for (const [input, field] of [
+      [els.infX, 'x'],
+      [els.infY, 'y'],
+      [els.infL, 'l'],
+      [els.infH, 'h'],
+      [els.infA, 'a'],
+      [els.infV, 'v'],
+    ]) {
+      input.addEventListener('change', () => {
+        applyInfoEdit(field, input.value);
+        input.blur();
+      });
+      input.addEventListener('keydown', (e) => e.stopPropagation());
+    }
+
+    // Commutateurs d'affichage : distances aux bords, grille (persistés)
+    const syncViewToggles = () => {
+      els.toggleDist.classList.toggle('is-active', showDistances);
+      els.toggleGrid.classList.toggle('is-active', showGrid);
+    };
+    els.toggleDist.addEventListener('click', () => {
+      showDistances = !showDistances;
+      localStorage.setItem('studioShowDist', String(showDistances));
+      syncViewToggles();
+      if (S) drawHud();
+    });
+    els.toggleGrid.addEventListener('click', () => {
+      showGrid = !showGrid;
+      localStorage.setItem('studioShowGrid', String(showGrid));
+      syncViewToggles();
+      if (S) drawHud();
+    });
+    syncViewToggles();
+
+    // Les gestes s'écoutent sur toute la scène, pas seulement le canevas :
+    // un coup de pinceau peut commencer (et vivre) hors de l'image — seule
+    // sa partie qui recouvre le calque laisse une trace, comme Photoshop.
+    els.stage.addEventListener('pointerdown', onPointerDown);
+    els.stage.addEventListener('pointermove', onPointerMove);
+    els.stage.addEventListener('pointerup', onPointerUp);
+    els.stage.addEventListener('pointercancel', onPointerUp);
+    els.stage.addEventListener('dblclick', onDblClick);
+    els.stage.addEventListener('pointerleave', () => {
       if (!S) return;
       S.cursorPos = null;
       drawHud();
@@ -4154,7 +4949,10 @@ window.Studio = (() => {
         eraser: { size: 40, hardness: 40, roundness: 100, angle: 0 },
         clone: { size: 34, hardness: 55, roundness: 100, angle: 0 },
         retouch: { size: 44, hardness: 25, roundness: 100, angle: 0 },
+        heal: { size: 30, hardness: 60, roundness: 100, angle: 0 },
       },
+      guides: [], // repères de mesure temporaires (règle, compas, cercle)
+      healPreview: null,
       retouch: { mode: 'blur', strength: 50 },
       shape: { kind: 'rect', fill: false, width: 6 },
       shapeDraft: null,

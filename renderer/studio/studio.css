@@ -49,6 +49,84 @@ body.studio-open #strip-toggle {
   min-width: 0;
 }
 
+/* ---------- Lecture en direct, éditable (objet sélectionné) ----------
+   Logée à droite de la barre d'options, à côté des réglages de l'outil. */
+
+#studio-opt-tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+/* la barre se remplit depuis la gauche : les infos suivent directement
+   les réglages de l'outil, séparées d'un filet */
+#studio-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin-left: 2px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+
+.sinf {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.sinf-k {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+}
+
+.sinf-in {
+  width: 54px;
+  height: 24px;
+  padding: 0 5px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 11.5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+.sinf-in:focus {
+  border-color: var(--accent);
+}
+
+.sinf-in:disabled {
+  opacity: 0.4;
+}
+
+.sinf-in::-webkit-inner-spin-button,
+.sinf-in::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+#sinf-name {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 60px;
+  max-width: 170px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
 #studio-title-label {
   font-size: 13px;
   font-weight: 600;
@@ -89,6 +167,12 @@ body.studio-open #strip-toggle {
 .studio-tb:disabled {
   opacity: 0.3;
   cursor: default;
+}
+
+.studio-tb.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: rgba(110, 168, 255, 0.35);
 }
 
 .studio-btn {
@@ -253,6 +337,8 @@ body.studio-open #strip-toggle {
   display: flex;
   background: radial-gradient(ellipse at center, var(--stage-center) 0%, var(--bg) 75%);
   min-width: 0;
+  /* les gestes de dessin s'écoutent sur toute la scène (hors canevas aussi) */
+  touch-action: none;
 }
 
 #studio-wrap {

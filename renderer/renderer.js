@@ -1,5 +1,8 @@
 'use strict';
 
+// i18n : raccourci de traduction (clé = phrase française, voir i18n/i18n.js)
+const tr = (s, p) => window.I18n.t(s, p);
+
 const stage = document.getElementById('stage');
 const image = document.getElementById('image');
 const emptyState = document.getElementById('empty-state');
@@ -103,7 +106,7 @@ function fitScale() {
 function applyTransform() {
   image.style.transform =
     `translate(-50%, -50%) translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
-  zoomLabel.textContent = state.fit ? 'Ajusté' : `${Math.round(state.zoom * 100)} %`;
+  zoomLabel.textContent = state.fit ? tr('Ajusté') : `${Math.round(state.zoom * 100)} %`;
   if (window.Pro && window.Pro.active()) window.Pro.onViewChanged();
 }
 
@@ -1495,7 +1498,8 @@ window.addEventListener('mouseup', () => {
 
 /* ---------- Popup d'informations ---------- */
 
-function infoRow(label, value) {
+function infoRow(labelFr, value) {
+  const label = tr(labelFr);
   const row = document.createElement('div');
   row.className = 'info-row';
   const dt = document.createElement('div');
@@ -1511,7 +1515,7 @@ function infoRow(label, value) {
 function infoSection(title) {
   const el = document.createElement('div');
   el.className = 'info-section';
-  el.textContent = title;
+  el.textContent = tr(title);
   return el;
 }
 
@@ -1535,8 +1539,8 @@ function showInfo() {
 
   infoBody.append(infoSection('Image'));
   if (w && h && !image.hidden) {
-    infoBody.append(infoRow('Dimensions', `${w} × ${h} pixels`));
-    infoBody.append(infoRow('Définition', `${((w * h) / 1e6).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} mégapixels`));
+    infoBody.append(infoRow('Dimensions', tr('{w} × {h} pixels', { w, h })));
+    infoBody.append(infoRow('Définition', tr('{n} mégapixels', { n: ((w * h) / 1e6).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) })));
     infoBody.append(infoRow('Rapport d’aspect', aspectRatio(w, h)));
   } else {
     infoBody.append(infoRow('Dimensions', '–'));
@@ -1548,7 +1552,7 @@ function showInfo() {
   infoBody.append(infoRow('Dernier accès', formatDate(state.stat?.atime)));
 
   infoBody.append(infoSection('Dossier courant'));
-  infoBody.append(infoRow('Position', `${state.index + 1} sur ${state.files.length}`));
+  infoBody.append(infoRow('Position', tr('{a} sur {b}', { a: state.index + 1, b: state.files.length })));
 
   infoOverlay.hidden = false;
 }
@@ -1679,7 +1683,7 @@ async function upLoadModels() {
   if (!names || names.length === 0) {
     upRun.disabled = true;
     upShowError(
-      'Moteur d’upscale introuvable : le dossier code_source_upscale (bin + models) doit accompagner l’application.'
+      tr('Moteur d’upscale introuvable : le dossier code_source_upscale (bin + models) doit accompagner l’application.')
     );
     return;
   }
@@ -1687,7 +1691,7 @@ async function upLoadModels() {
   for (const name of names) {
     const opt = document.createElement('option');
     opt.value = name;
-    opt.textContent = UP_MODEL_LABELS[name] || name;
+    opt.textContent = tr(UP_MODEL_LABELS[name] || name);
     upModel.append(opt);
   }
   upModel.value = names.includes(remembered) ? remembered : names[0];
@@ -1724,7 +1728,7 @@ async function runUpscale() {
   if (!file || up.running) return;
   const f = upFactor();
   if (!f || f <= 1) {
-    upShowError('Le facteur doit être supérieur à 1 (entre 1,1 et 8).');
+    upShowError(tr('Le facteur doit être supérieur à 1 (entre 1,1 et 8).'));
     return;
   }
   localStorage.setItem('upscaleModel', upModel.value);
@@ -1745,7 +1749,7 @@ async function runUpscale() {
       payload = { sourcePath: file.path, scale: engineScale, model: upModel.value };
     } else {
       const decoded = await decodeCurrentFile(file);
-      if (!decoded) throw new Error('Impossible de décoder cette image.');
+      if (!decoded) throw new Error(tr('Impossible de décoder cette image.'));
       const { img, url } = decoded;
       const c = document.createElement('canvas');
       c.width = img.naturalWidth;
@@ -1767,12 +1771,12 @@ async function runUpscale() {
       upSetPhase('setup');
       return;
     }
-    if (res.error || !res.data) throw new Error(res.error || 'Le moteur n’a produit aucun résultat.');
+    if (res.error || !res.data) throw new Error(res.error || tr('Le moteur n’a produit aucun résultat.'));
     await upShowResult(res.data, f);
   } catch (err) {
     if (upIsOpen()) {
       upSetPhase('setup');
-      upShowError(`Échec de l’agrandissement : ${err.message}`);
+      upShowError(tr('Échec de l’agrandissement : {msg}', { msg: err.message }));
     }
   } finally {
     up.running = false;
@@ -1953,7 +1957,7 @@ async function upSaveResult(mode) {
           : await window.viewer.saveInPlace(payload);
     }
     if (!savedPath) {
-      upShowError('Enregistrement impossible (fichier verrouillé ou dossier protégé ?).');
+      upShowError(tr('Enregistrement impossible (fichier verrouillé ou dossier protégé ?).'));
       upSetPhase('setup');
       return;
     }
@@ -2075,7 +2079,7 @@ function syncActiveTab() {
 
 function tabTitle(t) {
   const f = t.index >= 0 ? t.files[t.index] : null;
-  return f ? f.name : 'Accueil';
+  return f ? f.name : tr('Accueil');
 }
 
 function renderTabs() {
@@ -2674,6 +2678,49 @@ window.addEventListener('resize', () => {
    n'atteigne window). */
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
+
+/* ---------- Langue de l'interface (i18n) ----------
+   Liste simple des 11 langues (noms natifs) sous le bouton globe ;
+   le choix est mémorisé et poussé au process main pour les dialogues. */
+
+const btnLang = document.getElementById('btn-lang');
+const langPopup = document.getElementById('lang-popup');
+
+function buildLangPopup() {
+  langPopup.innerHTML = '';
+  for (const { code, name } of window.I18n.languages()) {
+    const b = document.createElement('button');
+    b.className = 'lang-item';
+    b.textContent = name;
+    b.lang = code;
+    b.classList.toggle('is-active', code === window.I18n.locale());
+    b.addEventListener('click', async () => {
+      await window.I18n.setLocale(code);
+      langPopup.hidden = true;
+      render(); // rafraîchit les textes dynamiques (zoom, onglets…)
+      renderTabs();
+    });
+    langPopup.appendChild(b);
+  }
+}
+
+btnLang.addEventListener('click', () => {
+  if (!langPopup.hidden) {
+    langPopup.hidden = true;
+    return;
+  }
+  buildLangPopup();
+  const r = btnLang.getBoundingClientRect();
+  langPopup.style.top = `${r.bottom + 6}px`;
+  langPopup.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+  langPopup.hidden = false;
+});
+
+document.addEventListener('pointerdown', (e) => {
+  if (langPopup.hidden) return;
+  if (langPopup.contains(e.target) || btnLang.contains(e.target)) return;
+  langPopup.hidden = true;
+});
 
 /* ---------- Modules optionnels (débranchables) ----------
    Chaque module construit son bouton (.module-btn, suivi par render())

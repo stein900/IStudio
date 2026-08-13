@@ -261,7 +261,9 @@ window.StudioCore = (() => {
     }
   }
 
-  /** Dessine le contenu brut d'un calque (avec sa transformation `tx`). */
+  /** Dessine le contenu brut d'un calque (avec sa transformation `tx`).
+      Ordre de la transformation : échelle, puis inclinaison `k`
+      (cisaillement horizontal, Ctrl sur les poignées), puis rotation. */
   function renderLayerContent(ctx, l) {
     if (l.kind === 'raster') {
       if (l.tx) {
@@ -270,6 +272,7 @@ window.StudioCore = (() => {
         ctx.save();
         ctx.translate(l.x + w0 / 2, l.y + h0 / 2);
         ctx.rotate(l.tx.rot);
+        if (l.tx.k) ctx.transform(1, 0, l.tx.k, 1, 0, 0);
         ctx.scale(l.tx.sx, l.tx.sy);
         ctx.drawImage(l.canvas, -w0 / 2, -h0 / 2);
         ctx.restore();
@@ -353,17 +356,31 @@ window.StudioCore = (() => {
     const h0 = l.canvas.height;
     const cx = l.x + w0 / 2;
     const cy = l.y + h0 / 2;
-    const cos = Math.abs(Math.cos(t.rot));
-    const sin = Math.abs(Math.sin(t.rot));
-    const sw = Math.abs(w0 * t.sx);
-    const sh = Math.abs(h0 * t.sy);
-    const bw = Math.max(1, Math.ceil(sw * cos + sh * sin));
-    const bh = Math.max(1, Math.ceil(sw * sin + sh * cos));
+    // boîte englobante par les coins transformés (l'application est
+    // linéaire et symétrique autour du centre : bornes = max des |coins|)
+    const cos = Math.cos(t.rot);
+    const sin = Math.sin(t.rot);
+    const k = t.k || 0;
+    const map = (lx, ly) => {
+      const xs = lx * t.sx + k * (ly * t.sy);
+      const ys = ly * t.sy;
+      return { x: xs * cos - ys * sin, y: xs * sin + ys * cos };
+    };
+    let mx = 1;
+    let my = 1;
+    for (const [lx, ly] of [[-w0 / 2, -h0 / 2], [w0 / 2, -h0 / 2]]) {
+      const c = map(lx, ly);
+      mx = Math.max(mx, Math.abs(c.x));
+      my = Math.max(my, Math.abs(c.y));
+    }
+    const bw = Math.max(1, Math.ceil(mx * 2));
+    const bh = Math.max(1, Math.ceil(my * 2));
     const nc = createCanvas(bw, bh);
     const ctx = nc.getContext('2d');
     ctx.save(); // la transformation ne doit pas rester sur le contexte :
     ctx.translate(bw / 2, bh / 2); // les dessins suivants (gomme, pinceau…)
     ctx.rotate(t.rot); // seraient déplacés et mis à l'échelle avec elle
+    if (k) ctx.transform(1, 0, k, 1, 0, 0);
     ctx.scale(t.sx, t.sy);
     ctx.drawImage(l.canvas, -w0 / 2, -h0 / 2);
     ctx.restore();
@@ -547,8 +564,10 @@ window.StudioCore = (() => {
         const sin = Math.sin(l.tx.rot);
         const dx = x - cx;
         const dy = y - cy;
-        px = Math.round((dx * cos + dy * sin) / (l.tx.sx || 1e-6) + w0 / 2);
-        py = Math.round((-dx * sin + dy * cos) / (l.tx.sy || 1e-6) + h0 / 2);
+        const xr = dx * cos + dy * sin;
+        const yr = -dx * sin + dy * cos;
+        px = Math.round((xr - (l.tx.k || 0) * yr) / (l.tx.sx || 1e-6) + w0 / 2);
+        py = Math.round(yr / (l.tx.sy || 1e-6) + h0 / 2);
       } else {
         px = Math.round(x - l.x);
         py = Math.round(y - l.y);

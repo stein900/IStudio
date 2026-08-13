@@ -25,7 +25,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
         </svg>
-        <span>Ouvrir</span>
+        <span data-i18n>Ouvrir</span>
       </button>
       <button id="btn-home" class="icon-btn" title="Accueil — revenir à l'écran de départ">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -40,7 +40,7 @@
           <rect x="3" y="14" width="7" height="7" rx="1.5" />
           <rect x="14" y="14" width="7" height="7" rx="1.5" />
         </svg>
-        <span>Global</span>
+        <span data-i18n>Global</span>
       </button>
       <span class="toolbar-sep" aria-hidden="true"></span>
       <button id="btn-prev" class="icon-btn" title="Image précédente (←)">
@@ -172,6 +172,13 @@
           <line x1="16.5" y1="14.5" x2="21" y2="14.5" />
         </svg>
       </button>
+      <button id="btn-lang" class="icon-btn" title="Langue de l’interface">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18" />
+          <path d="M12 3a13.5 13.5 0 0 1 0 18a13.5 13.5 0 0 1 0-18" />
+        </svg>
+      </button>
       <button id="btn-theme" class="icon-btn" title="Basculer thème clair / sombre (T)">
         <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
@@ -199,7 +206,7 @@
           <img src="assets/istudio-logo.png" alt="" width="56" height="56" decoding="async" />
           <span>IStudio</span>
         </div>
-        <p id="home-sub">Visionneuse &amp; studio d'édition d'images</p>
+        <p id="home-sub" data-i18n>Visionneuse &amp; studio d'édition d'images</p>
         <div id="home-actions">
           <button id="home-open" class="home-card">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -207,8 +214,8 @@
               <circle cx="8.5" cy="8.5" r="1.5" />
               <path d="m21 15-5-5L5 21" />
             </svg>
-            <span class="home-card-title">Ouvrir une image</span>
-            <span class="home-card-sub">Parcourir vos fichiers — jpg, png, psd…</span>
+            <span class="home-card-title" data-i18n>Ouvrir une image</span>
+            <span class="home-card-sub" data-i18n>Parcourir vos fichiers — jpg, png, psd…</span>
           </button>
           <button id="home-studio" class="home-card">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -217,22 +224,22 @@
               <rect x="3" y="14" width="7" height="7" rx="1" />
               <rect x="14" y="14" width="7" height="7" rx="1" />
             </svg>
-            <span class="home-card-title">Nouveau projet</span>
-            <span class="home-card-sub">Studio : montage multi-calques, gabarits &amp; toile vierge</span>
+            <span class="home-card-title" data-i18n>Nouveau projet</span>
+            <span class="home-card-sub" data-i18n>Studio : montage multi-calques, gabarits &amp; toile vierge</span>
           </button>
           <button id="home-paint" class="home-card">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
             </svg>
-            <span class="home-card-title">Nouveau dessin</span>
-            <span class="home-card-sub">Paint : croquis et annotations rapides</span>
+            <span class="home-card-title" data-i18n>Nouveau dessin</span>
+            <span class="home-card-sub" data-i18n>Paint : croquis et annotations rapides</span>
           </button>
           <button id="home-project" class="home-card">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
             </svg>
-            <span class="home-card-title">Ouvrir un projet</span>
-            <span class="home-card-sub">Reprendre un montage .istudio avec ses calques</span>
+            <span class="home-card-title" data-i18n>Ouvrir un projet</span>
+            <span class="home-card-sub" data-i18n>Reprendre un montage .istudio avec ses calques</span>
           </button>
           <button id="home-upscale" class="home-card home-card-wide">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -241,8 +248,8 @@
               <path d="M7 5H3" />
             </svg>
             <span class="home-card-text">
-              <span class="home-card-title">Agrandir avec l'IA</span>
-              <span class="home-card-sub">Upscale ×2, ×3, ×4 ou personnalisé : choisir une image, comparer avant/après, puis enregistrer ou créer une copie</span>
+              <span class="home-card-title" data-i18n>Agrandir avec l'IA</span>
+              <span class="home-card-sub" data-i18n>Upscale ×2, ×3, ×4 ou personnalisé : choisir une image, comparer avant/après, puis enregistrer ou créer une copie</span>
             </span>
           </button>
         </div>
@@ -251,39 +258,39 @@
 
     <div id="newproj-backdrop" hidden>
       <div id="newproj">
-        <div id="newproj-title">Nouveau projet</div>
+        <div id="newproj-title" data-i18n>Nouveau projet</div>
         <div class="np-row">
-          <label for="np-name">Nom du projet</label>
+          <label for="np-name" data-i18n>Nom du projet</label>
           <input id="np-name" type="text" value="Sans titre" spellcheck="false" />
         </div>
         <div id="np-templates"></div>
         <div class="np-row np-dims">
-          <label for="np-w">Largeur</label>
+          <label for="np-w" data-i18n>Largeur</label>
           <input id="np-w" type="number" min="1" max="20000" value="1920" />
-          <label for="np-h">Hauteur</label>
+          <label for="np-h" data-i18n>Hauteur</label>
           <input id="np-h" type="number" min="1" max="20000" value="1080" />
           <label for="np-dpi">DPI</label>
           <input id="np-dpi" type="number" min="18" max="1200" value="72" />
         </div>
         <div class="np-row">
-          <label for="np-bg">Arrière-plan</label>
+          <label for="np-bg" data-i18n>Arrière-plan</label>
           <select id="np-bg">
-            <option value="#ffffff">Blanc</option>
-            <option value="#000000">Noir</option>
-            <option value="transparent">Transparent</option>
-            <option value="custom">Couleur personnalisée…</option>
+            <option value="#ffffff" data-i18n>Blanc</option>
+            <option value="#000000" data-i18n>Noir</option>
+            <option value="transparent" data-i18n>Transparent</option>
+            <option value="custom" data-i18n>Couleur personnalisée…</option>
           </select>
           <input id="np-bg-color" type="color" value="#2f6fd8" hidden />
-          <label for="np-mode">Mode</label>
+          <label for="np-mode" data-i18n>Mode</label>
           <select id="np-mode">
             <option value="rgb">RVB</option>
             <option value="cmyk">CMJN</option>
           </select>
         </div>
-        <p id="np-note" hidden>Le mode CMJN est enregistré avec le projet ; l'affichage et l'édition restent en RVB.</p>
+        <p id="np-note" hidden data-i18n>Le mode CMJN est enregistré avec le projet ; l'affichage et l'édition restent en RVB.</p>
         <div id="np-buttons">
-          <button id="np-cancel" class="btn-labeled">Annuler</button>
-          <button id="np-create" class="btn-labeled np-primary">Créer le projet</button>
+          <button id="np-cancel" class="btn-labeled" data-i18n>Annuler</button>
+          <button id="np-create" class="btn-labeled np-primary" data-i18n>Créer le projet</button>
         </div>
       </div>
     </div>
@@ -294,7 +301,7 @@
         <line x1="12" y1="9" x2="12" y2="13" />
         <line x1="12" y1="16.8" x2="12.01" y2="16.8" />
       </svg>
-      <p>Impossible d'afficher cette image</p>
+      <p data-i18n>Impossible d'afficher cette image</p>
       <p id="error-name" class="empty-hint"></p>
     </div>
 
@@ -307,12 +314,12 @@
           </svg>
           <input id="gallery-search" type="text" placeholder="Rechercher un fichier…" spellcheck="false" />
         </div>
-        <label class="gallery-lbl" for="gallery-sort">Trier</label>
+        <label class="gallery-lbl" for="gallery-sort" data-i18n>Trier</label>
         <select id="gallery-sort">
-          <option value="name">Nom</option>
-          <option value="mtime">Date de modification</option>
-          <option value="size">Taille</option>
-          <option value="type">Type</option>
+          <option value="name" data-i18n>Nom</option>
+          <option value="mtime" data-i18n>Date de modification</option>
+          <option value="size" data-i18n>Taille</option>
+          <option value="type" data-i18n>Type</option>
         </select>
         <button id="gallery-dir" title="Ordre croissant / décroissant">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -320,9 +327,9 @@
             <polyline points="6 13 12 19 18 13" />
           </svg>
         </button>
-        <label class="gallery-lbl" for="gallery-format">Format</label>
+        <label class="gallery-lbl" for="gallery-format" data-i18n>Format</label>
         <select id="gallery-format">
-          <option value="all">Tous</option>
+          <option value="all" data-i18n>Tous</option>
         </select>
         <span id="gallery-count"></span>
       </div>
@@ -349,7 +356,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <polyline points="20 6 9 17 4 12" />
           </svg>
-          <span>Appliquer</span>
+          <span data-i18n>Appliquer</span>
         </button>
         <button id="crop-cancel" class="btn-labeled" title="Annuler le rognage (Échap)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -369,10 +376,12 @@
   </button>
   <footer id="filmstrip" hidden></footer>
 
+  <div id="lang-popup" hidden></div>
+
   <div id="info-overlay" hidden>
     <div id="info-card" role="dialog" aria-modal="true" aria-labelledby="info-title">
       <div id="info-header">
-        <h2 id="info-title">Informations</h2>
+        <h2 id="info-title" data-i18n>Informations</h2>
         <button id="info-close" class="icon-btn" title="Fermer (Échap)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18" />
@@ -393,7 +402,7 @@
             <path d="M5 3v4" />
             <path d="M7 5H3" />
           </svg>
-          <h2 id="up-title">Agrandir avec l'IA</h2>
+          <h2 id="up-title" data-i18n>Agrandir avec l'IA</h2>
         </div>
         <button id="up-close" class="icon-btn" title="Fermer (Échap)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -405,17 +414,17 @@
 
       <div id="up-setup">
         <div class="up-row">
-          <span class="up-label">Facteur</span>
+          <span class="up-label" data-i18n>Facteur</span>
           <div id="up-scales">
             <button class="up-scale" data-scale="2">×2</button>
             <button class="up-scale" data-scale="3">×3</button>
             <button class="up-scale" data-scale="4">×4</button>
-            <button class="up-scale" data-scale="custom">Personnalisé</button>
+            <button class="up-scale" data-scale="custom" data-i18n>Personnalisé</button>
           </div>
           <input id="up-custom" type="number" min="1.1" max="8" step="0.1" value="2.5" hidden />
         </div>
         <div class="up-row">
-          <span class="up-label">Modèle</span>
+          <span class="up-label" data-i18n>Modèle</span>
           <select id="up-model"></select>
         </div>
         <div id="up-dims">
@@ -426,22 +435,22 @@
           </svg>
           <span id="up-dims-to">–</span>
         </div>
-        <p id="up-note">Traitement local sur la carte graphique (Real-ESRGAN). Les grandes images peuvent prendre plusieurs minutes. Au tout premier lancement, un bref test choisit le processeur graphique le plus fiable.</p>
+        <p id="up-note" data-i18n>Traitement local sur la carte graphique (Real-ESRGAN). Les grandes images peuvent prendre plusieurs minutes. Au tout premier lancement, un bref test choisit le processeur graphique le plus fiable.</p>
         <p id="up-error" hidden></p>
         <div class="up-buttons">
-          <button id="up-cancel" class="btn-labeled">Annuler</button>
-          <button id="up-run" class="btn-labeled np-primary">Lancer l'agrandissement</button>
+          <button id="up-cancel" class="btn-labeled" data-i18n>Annuler</button>
+          <button id="up-run" class="btn-labeled np-primary" data-i18n>Lancer l'agrandissement</button>
         </div>
       </div>
 
       <div id="up-progress" hidden>
         <div id="up-progress-track"><div id="up-progress-bar"></div></div>
         <div id="up-progress-info">
-          <span id="up-progress-label">Agrandissement en cours…</span>
+          <span id="up-progress-label" data-i18n>Agrandissement en cours…</span>
           <span id="up-progress-pct">0 %</span>
         </div>
         <div class="up-buttons">
-          <button id="up-abort" class="btn-labeled">Annuler</button>
+          <button id="up-abort" class="btn-labeled" data-i18n>Annuler</button>
         </div>
       </div>
 
@@ -457,17 +466,17 @@
               </svg>
             </div>
           </div>
-          <span class="up-tag" id="up-tag-before">Avant</span>
-          <span class="up-tag" id="up-tag-after">Après</span>
+          <span class="up-tag" id="up-tag-before" data-i18n>Avant</span>
+          <span class="up-tag" id="up-tag-after" data-i18n>Après</span>
         </div>
         <div id="up-result-meta">
           <span id="up-result-dims"></span>
-          <span id="up-result-hint">Molette : zoomer · glisser : déplacer · poignée : comparer avant / après</span>
+          <span id="up-result-hint" data-i18n>Molette : zoomer · glisser : déplacer · poignée : comparer avant / après</span>
         </div>
         <div class="up-buttons">
-          <button id="up-discard" class="btn-labeled">Annuler</button>
-          <button id="up-save-copy" class="btn-labeled">Sauvegarder une copie</button>
-          <button id="up-save" class="btn-labeled np-primary">Enregistrer cette version</button>
+          <button id="up-discard" class="btn-labeled" data-i18n>Annuler</button>
+          <button id="up-save-copy" class="btn-labeled" data-i18n>Sauvegarder une copie</button>
+          <button id="up-save" class="btn-labeled np-primary" data-i18n>Enregistrer cette version</button>
         </div>
       </div>
     </div>
@@ -477,7 +486,7 @@
     <header id="paint-topbar">
       <div class="toolbar-group">
         <button id="paint-close" class="btn-labeled" data-icon="back" title="Retour à la visionneuse">
-          <span>Retour</span>
+          <span data-i18n>Retour</span>
         </button>
         <span class="toolbar-sep" aria-hidden="true"></span>
         <div id="paint-title">
@@ -492,10 +501,10 @@
         <button id="paint-clear" class="paint-tb" data-icon="trash" title="Effacer toutes les annotations"></button>
         <span class="toolbar-sep" aria-hidden="true"></span>
         <button id="paint-copy" class="btn-labeled" data-icon="copy" title="Copier le résultat (PNG) dans le presse-papiers">
-          <span>Copier</span>
+          <span data-i18n>Copier</span>
         </button>
         <button id="paint-save" class="btn-labeled btn-primary" data-icon="save" title="Aplatir les annotations dans le fichier (Ctrl+S)">
-          <span>Enregistrer</span>
+          <span data-i18n>Enregistrer</span>
         </button>
       </div>
     </header>
@@ -541,11 +550,12 @@
 
     <footer id="paint-statusbar">
       <span id="paint-status-counts"></span>
-      <span id="paint-status-hint">Molette = zoom · clic-molette = déplacer la vue · une forme posée reste active (poignées) et s'ancre au tracé suivant ou avec Échap · la gomme n'agit que sur le calque actif · Maj = régulier</span>
+      <span id="paint-status-hint" data-i18n>Molette = zoom · clic-molette = déplacer la vue · une forme posée reste active (poignées) et s'ancre au tracé suivant ou avec Échap · la gomme n'agit que sur le calque actif · Maj = régulier</span>
       <span id="paint-status-layer"></span>
     </footer>
   </div>
 
+  <script src="i18n/i18n.js"></script>
   <script src="paint.js"></script>
   <script src="svg-export/svg-export.js"></script><!-- Module Export SVG -->
   <script src="renderer.js"></script>
