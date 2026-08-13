@@ -37,7 +37,7 @@ body.studio-open #strip-toggle {
   gap: 16px;
   height: 50px;
   padding: 0 14px;
-  background: linear-gradient(180deg, #1a1a1f 0%, var(--bg-panel) 100%);
+  background: linear-gradient(180deg, var(--bg-panel-top) 0%, var(--bg-panel) 100%);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
@@ -102,7 +102,7 @@ body.studio-open #strip-toggle {
   letter-spacing: 0.2px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--btn-bg);
   color: var(--text);
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease;
@@ -251,7 +251,7 @@ body.studio-open #strip-toggle {
   position: relative;
   overflow: auto;
   display: flex;
-  background: radial-gradient(ellipse at center, #131318 0%, var(--bg) 75%);
+  background: radial-gradient(ellipse at center, var(--stage-center) 0%, var(--bg) 75%);
   min-width: 0;
 }
 
@@ -261,13 +261,13 @@ body.studio-open #strip-toggle {
   margin: auto;
   flex: none;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-  /* damier de transparence sous le montage */
+  /* damier de transparence clair sous le montage, comme Photoshop */
   background-image:
-    linear-gradient(45deg, #23232a 25%, transparent 25%, transparent 75%, #23232a 75%),
-    linear-gradient(45deg, #23232a 25%, transparent 25%, transparent 75%, #23232a 75%);
+    linear-gradient(45deg, #cbcbcb 25%, transparent 25%, transparent 75%, #cbcbcb 75%),
+    linear-gradient(45deg, #cbcbcb 25%, transparent 25%, transparent 75%, #cbcbcb 75%);
   background-size: 16px 16px;
   background-position: 0 0, 8px 8px;
-  background-color: #1b1b21;
+  background-color: #ffffff;
 }
 
 #studio-canvas,
@@ -318,7 +318,7 @@ body.studio-open #strip-toggle {
   z-index: 60;
   min-width: 250px;
   padding: 6px;
-  background: #1c1c22;
+  background: var(--bg-menu);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
@@ -379,7 +379,7 @@ body.studio-open #strip-toggle {
   min-width: 380px;
   max-width: 460px;
   padding: 18px;
-  background: #1c1c22;
+  background: var(--bg-menu);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
@@ -414,7 +414,7 @@ body.studio-open #strip-toggle {
   width: 90px;
   height: 28px;
   padding: 0 8px;
-  background: #26262d;
+  background: var(--bg-input);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -426,7 +426,7 @@ body.studio-open #strip-toggle {
   width: 44px;
   height: 28px;
   padding: 2px;
-  background: #26262d;
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 7px;
   cursor: pointer;
@@ -482,7 +482,7 @@ body.studio-open #strip-toggle {
   flex: 1 1 auto;
   height: 26px;
   padding: 0 6px;
-  background: #26262d;
+  background: var(--bg-input);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -496,7 +496,7 @@ body.studio-open #strip-toggle {
   min-width: 0;
   height: 22px;
   padding: 0 6px;
-  background: #26262d;
+  background: var(--bg-input);
   color: var(--text);
   border: 1px solid var(--accent);
   border-radius: 5px;
@@ -658,7 +658,7 @@ body.studio-open #strip-toggle {
 .studio-font-select {
   height: 28px;
   padding: 0 8px;
-  background: #26262d;
+  background: var(--bg-input);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -724,7 +724,7 @@ body.studio-open #strip-toggle {
   width: 28px;
   height: 28px;
   padding: 2px;
-  background: #26262d;
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 7px;
   cursor: pointer;
@@ -735,38 +735,38 @@ body.studio-open #strip-toggle {
 #studio-brush-popup {
   position: absolute;
   z-index: 40;
-  width: 300px;
-  padding: 12px;
-  background: rgba(30, 30, 36, 0.96);
+  width: 440px;
+  padding: 14px;
+  background: var(--glass);
   backdrop-filter: blur(14px);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .sbp-top {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
 }
 
 #sbp-preview {
   flex: 0 0 auto;
-  width: 72px;
-  height: 72px;
+  width: 84px;
+  height: 84px;
   border: 1px solid var(--border);
   border-radius: 50%;
-  background: #26262d;
+  background: var(--bg-input);
 }
 
 .sbp-sliders {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -779,23 +779,46 @@ body.studio-open #strip-toggle {
 }
 
 .sbp-lab {
-  width: 58px;
+  width: 52px;
   flex: 0 0 auto;
 }
 
 .sbp-row input[type='range'] {
   flex: 1;
   min-width: 0;
-  accent-color: var(--accent);
   cursor: pointer;
 }
 
-.sbp-val {
-  width: 44px;
+/* Valeur exacte au clavier, sans flèches de spinner (rendu studio) */
+.sbp-num {
+  width: 52px;
+  height: 24px;
   flex: 0 0 auto;
+  padding: 0 6px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 11.5px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-  color: var(--text);
+  outline: none;
+}
+
+.sbp-num:focus {
+  border-color: var(--accent);
+}
+
+.sbp-num::-webkit-inner-spin-button,
+.sbp-num::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.sbp-unit {
+  width: 18px;
+  flex: 0 0 auto;
+  color: var(--text-faint);
 }
 
 .sbp-presets-head {
@@ -803,7 +826,7 @@ body.studio-open #strip-toggle {
   font-weight: 600;
   color: var(--text-dim);
   padding: 6px 8px 4px;
-  background: #26262d;
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-bottom: none;
   border-radius: 8px 8px 0 0;
@@ -817,7 +840,7 @@ body.studio-open #strip-toggle {
   overflow-y: auto;
   scrollbar-width: thin;
   padding: 6px;
-  background: #26262d;
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 0 0 8px 8px;
 }
@@ -879,7 +902,7 @@ body.studio-open #strip-toggle {
   align-items: center;
   gap: 3px;
   padding: 2px 5px 2px 3px;
-  background: #26262d;
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 8px;
   cursor: pointer;

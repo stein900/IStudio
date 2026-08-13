@@ -1721,6 +1721,28 @@ ipcMain.handle('upscale-cancel', (e) => {
   return true;
 });
 
+/* ---------- Module Export SVG (renderer/svg-export) ----------
+   Seul point d'entrée côté main du module : dialogue d'enregistrement du
+   fichier .svg produit par le renderer. Supprimer ce bloc (et l'entrée
+   exportSvg du preload) pour débrancher le module. */
+ipcMain.handle('export-svg', async (e, { suggestedName, data }) => {
+  const { canceled, filePath } = await dialog.showSaveDialog(senderWindow(e), {
+    title: 'Exporter en SVG',
+    defaultPath: suggestedName,
+    filters: [
+      { name: 'Image vectorielle SVG', extensions: ['svg'] },
+      { name: 'Tous les fichiers', extensions: ['*'] },
+    ],
+  });
+  if (canceled || !filePath) return null;
+  try {
+    await fs.writeFile(filePath, Buffer.from(data));
+    return filePath;
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.handle('print-file', async (e, fileUrl) => {
   const printWin = new BrowserWindow({
     show: false,

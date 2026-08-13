@@ -178,7 +178,9 @@ function render() {
   const disable = !hasFile;
   btnPrev.disabled = disable || state.files.length < 2;
   btnNext.disabled = disable || state.files.length < 2;
-  for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnUpscale, btnPaint, btnStudio, btnInfo, btnPrint, btnDelete, btnGallery]) {
+  // .module-btn : boutons injectés par les modules optionnels (voir la
+  // section « Modules optionnels » en fin de fichier) — même cycle de vie
+  for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnUpscale, btnPaint, btnStudio, btnInfo, btnPrint, btnDelete, btnGallery, ...document.querySelectorAll('#toolbar .module-btn')]) {
     b.disabled = disable;
   }
 
@@ -2672,6 +2674,20 @@ window.addEventListener('resize', () => {
    n'atteigne window). */
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
+
+/* ---------- Modules optionnels (débranchables) ----------
+   Chaque module construit son bouton (.module-btn, suivi par render())
+   et sa popup ; l'hôte ne lui fournit que quelques accès. Retirer le
+   bloc d'un module suffit à le débrancher (voir son README). */
+
+// Module Export SVG (renderer/svg-export)
+if (window.SvgExport) {
+  window.SvgExport.init({
+    getFile: currentFile,
+    decodeFile: decodeCurrentFile,
+    canOpen: () => !cropMode && !editBusy && !image.hidden,
+  });
+}
 
 /* ---------- Démarrage ---------- */
 
