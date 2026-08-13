@@ -25,7 +25,7 @@ body.painting #strip-toggle {
   gap: 16px;
   height: 50px;
   padding: 0 14px;
-  background: linear-gradient(180deg, #1a1a1f 0%, var(--bg-panel) 100%);
+  background: linear-gradient(180deg, var(--bg-panel-top) 0%, var(--bg-panel) 100%);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
@@ -110,7 +110,7 @@ body.painting #strip-toggle {
   letter-spacing: 0.2px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--btn-bg);
   color: var(--text);
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease;
@@ -132,13 +132,13 @@ body.painting #strip-toggle {
 }
 
 #paint .btn-primary {
-  border-color: rgba(110, 168, 255, 0.5);
+  border-color: var(--accent-border);
   background: var(--accent-soft);
   color: var(--accent);
 }
 
 #paint .btn-primary:hover:not(:disabled) {
-  background: rgba(110, 168, 255, 0.24);
+  background: var(--accent-hover);
 }
 
 #paint-copy.is-active {
@@ -213,17 +213,46 @@ body.painting #strip-toggle {
 #paint-stage {
   flex: 1 1 auto;
   position: relative;
-  overflow: hidden;
+  /* la toile zoomée déborde : la scène devient défilable */
+  overflow: auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(ellipse at center, #131318 0%, var(--bg) 75%);
+  background: radial-gradient(ellipse at center, var(--stage-center) 0%, var(--bg) 75%);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+
+#paint-stage::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+#paint-stage::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 4px;
+}
+
+#paint-stage::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+#paint-stage.pan-ready {
+  cursor: grab;
+}
+
+#paint-stage.panning {
+  cursor: grabbing;
+}
+
+#paint-stage.panning #paint-canvas {
+  cursor: grabbing !important;
 }
 
 #paint-wrap {
   position: relative;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-  border-radius: 2px;
+  /* margin auto : centré quand la toile tient, défilable sinon
+     (la taille est fixée en JS = toile × zoom) */
+  margin: auto;
+  flex: none;
 }
 
 #paint-canvas {
@@ -232,6 +261,25 @@ body.painting #strip-toggle {
   height: 100%;
   touch-action: none; /* le stylet/doigt dessine, il ne fait pas défiler */
   border-radius: 2px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+body.light #paint-canvas {
+  box-shadow: 0 12px 40px rgba(28, 34, 56, 0.28);
+}
+
+/* Au fort zoom, les pixels sont rendus nets (pas de lissage) */
+#paint-canvas.pixelated {
+  image-rendering: pixelated;
+}
+
+#paint-zoom-label {
+  min-width: 46px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
 }
 
 /* ---------- Saisie de texte (posée sur la toile) ---------- */
@@ -262,7 +310,7 @@ body.painting #strip-toggle {
   right: 12px;
   width: 250px;
   z-index: 15;
-  background: rgba(22, 22, 27, 0.88);
+  background: var(--glass);
   backdrop-filter: saturate(160%) blur(16px);
   border: 1px solid var(--border-strong);
   border-radius: 12px;

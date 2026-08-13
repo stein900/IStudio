@@ -63,6 +63,9 @@ window.Paint = (() => {
     eyeOff: '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" />',
     chevronUp: '<polyline points="6 15 12 9 18 15" />',
     chevronDown: '<polyline points="6 9 12 15 18 9" />',
+    zoomIn: '<circle cx="11" cy="11" r="7" /><line x1="16.5" y1="16.5" x2="21" y2="21" /><line x1="8" y1="11" x2="14" y2="11" /><line x1="11" y1="8" x2="11" y2="14" />',
+    zoomOut: '<circle cx="11" cy="11" r="7" /><line x1="16.5" y1="16.5" x2="21" y2="21" /><line x1="8" y1="11" x2="14" y2="11" />',
+    fit: '<path d="M8 3H5a2 2 0 0 0-2 2v3" /><path d="M16 3h3a2 2 0 0 1 2 2v3" /><path d="M8 21H5a2 2 0 0 1-2-2v-3" /><path d="M16 21h3a2 2 0 0 0 2-2v-3" />',
   };
 
   function svgIcon(name, size = 15) {
@@ -576,6 +579,10 @@ window.Paint = (() => {
       btnSave: q('paint-save'),
       btnGrid: q('paint-grid'),
       btnLayers: q('paint-layers-toggle'),
+      btnZoomIn: q('paint-zoom-in'),
+      btnZoomOut: q('paint-zoom-out'),
+      btnZoomFit: q('paint-zoom-fit'),
+      zoomLabel: q('paint-zoom-label'),
       stage: q('paint-stage'),
       wrap: q('paint-wrap'),
       canvas: q('paint-canvas'),
@@ -1245,24 +1252,87 @@ window.Paint = (() => {
       P.fresh = false;
       requestRender();
     } else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (key === '+' || key === '=') {
+        paintZoomAtCenter(1.25);
+        return;
+      }
+      if (key === '-') {
+        paintZoomAtCenter(1 / 1.25);
+        return;
+      }
+      if (key === '0') {
+        paintZoomFit();
+        return;
+      }
+      if (key === '1') {
+        paintZoomTo(1);
+        return;
+      }
       const t = TOOLS.find((tl) => tl.key === key);
       if (t) chooseTool(t.id);
     }
   }
 
-  /* ---------- Dimensionnement ---------- */
+  /* ---------- Dimensionnement & zoom ----------
+     P.fit = true : la toile s'ajuste à la fenêtre ; sinon P.scale est
+     l'échelle choisie (5 % à 3200 %). La scène défile quand ça déborde ;
+     la molette zoome sous le curseur, le clic-molette déplace la vue. */
+
+  const PAINT_ZOOM_MIN = 0.05;
+  const PAINT_ZOOM_MAX = 32;
+
+  function applyPaintScale() {
+    const dw = Math.max(1, Math.round(P.img.naturalWidth * P.scale));
+    const dh = Math.max(1, Math.round(P.img.naturalHeight * P.scale));
+    els.wrap.style.width = `${dw}px`;
+    els.wrap.style.height = `${dh}px`;
+    // au-delà de 300 %, pixels nets (pas de lissage d'agrandissement)
+    els.canvas.classList.toggle('pixelated', P.scale >= 3);
+    els.zoomLabel.textContent = `${Math.round(P.scale * 100)} %`;
+    layoutTextEditor();
+    requestRender();
+  }
 
   function layout() {
     if (!P) return;
     const availW = els.stage.clientWidth - 32;
     const availH = els.stage.clientHeight - 32;
-    P.scale = Math.min(availW / P.img.naturalWidth, availH / P.img.naturalHeight, 1);
-    const dw = Math.max(1, Math.round(P.img.naturalWidth * P.scale));
-    const dh = Math.max(1, Math.round(P.img.naturalHeight * P.scale));
-    els.wrap.style.width = `${dw}px`;
-    els.wrap.style.height = `${dh}px`;
-    layoutTextEditor();
-    requestRender();
+    P.fitScale = Math.min(availW / P.img.naturalWidth, availH / P.img.naturalHeight, 1);
+    if (P.fit) P.scale = P.fitScale;
+    applyPaintScale();
+  }
+
+  /** Zoome en gardant le point (cx, cy) — coordonnées écran — fixe. */
+  function setPaintZoom(next, cx, cy) {
+    if (!P) return;
+    const target = Math.min(PAINT_ZOOM_MAX, Math.max(PAINT_ZOOM_MIN, next));
+    if (target === P.scale) return;
+    const wr = els.wrap.getBoundingClientRect();
+    const ix = (cx - wr.left) / P.scale; // point image sous le curseur
+    const iy = (cy - wr.top) / P.scale;
+    P.scale = target;
+    P.fit = false;
+    applyPaintScale();
+    // recale le défilement pour que ce point reste sous le curseur
+    const wr2 = els.wrap.getBoundingClientRect();
+    els.stage.scrollLeft += ix * P.scale + wr2.left - cx;
+    els.stage.scrollTop += iy * P.scale + wr2.top - cy;
+  }
+
+  function paintZoomAtCenter(factor) {
+    const r = els.stage.getBoundingClientRect();
+    setPaintZoom(P.scale * factor, r.left + r.width / 2, r.top + r.height / 2);
+  }
+
+  function paintZoomTo(scale) {
+    const r = els.stage.getBoundingClientRect();
+    setPaintZoom(scale, r.left + r.width / 2, r.top + r.height / 2);
+  }
+
+  function paintZoomFit() {
+    if (!P) return;
+    P.fit = true;
+    layout();
   }
 
   /* ---------- Aplatissement, enregistrement, copie ---------- */
@@ -1408,6 +1478,50 @@ window.Paint = (() => {
     });
     els.btnAddLayer.addEventListener('click', addLayer);
 
+    // Zoom : boutons, molette (sous le curseur), clic-molette (déplacement)
+    els.btnZoomIn.addEventListener('click', () => paintZoomAtCenter(1.25));
+    els.btnZoomOut.addEventListener('click', () => paintZoomAtCenter(1 / 1.25));
+    els.btnZoomFit.addEventListener('click', paintZoomFit);
+
+    els.stage.addEventListener(
+      'wheel',
+      (e) => {
+        if (!P) return;
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        setPaintZoom(P.scale * factor, e.clientX, e.clientY);
+      },
+      { passive: false }
+    );
+
+    let paintPan = null;
+    els.stage.addEventListener('mousedown', (e) => {
+      // neutralise l'auto-défilement natif du clic-molette
+      if (e.button === 1) e.preventDefault();
+    });
+    els.stage.addEventListener('pointerdown', (e) => {
+      if (!P || e.button !== 1) return;
+      e.preventDefault();
+      paintPan = { x: e.clientX, y: e.clientY, sl: els.stage.scrollLeft, st: els.stage.scrollTop };
+      els.stage.classList.add('panning');
+      try {
+        els.stage.setPointerCapture(e.pointerId);
+      } catch {
+        // pointeur synthétique : pas de capture possible
+      }
+    });
+    els.stage.addEventListener('pointermove', (e) => {
+      if (!paintPan) return;
+      els.stage.scrollLeft = paintPan.sl - (e.clientX - paintPan.x);
+      els.stage.scrollTop = paintPan.st - (e.clientY - paintPan.y);
+    });
+    const endPaintPan = () => {
+      paintPan = null;
+      els.stage.classList.remove('panning');
+    };
+    els.stage.addEventListener('pointerup', endPaintPan);
+    els.stage.addEventListener('pointercancel', endPaintPan);
+
     els.smoothing.addEventListener('input', () => {
       P.smoothing = Number(els.smoothing.value) / 100;
       updateStatus();
@@ -1471,6 +1585,8 @@ window.Paint = (() => {
       past: [],
       future: [],
       scale: 1,
+      fitScale: 1,
+      fit: true, // ajusté à la fenêtre tant que l'utilisateur n'a pas zoomé
     };
     P.activeLayerId = P.doc.layers[0].id;
 
@@ -1482,6 +1598,8 @@ window.Paint = (() => {
     els.root.hidden = false;
     document.body.classList.add('painting');
 
+    els.stage.scrollLeft = 0;
+    els.stage.scrollTop = 0;
     layout();
     updateToolbarUI();
     renderLayers();

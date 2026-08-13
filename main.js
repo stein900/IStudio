@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } = require('ele
 const path = require('path');
 const fs = require('fs/promises');
 const fssync = require('fs');
+const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 
 const IMAGE_EXTS = new Set([
@@ -86,18 +87,13 @@ async function buildContext(filePath) {
     .filter((e) => e.isFile() && IMAGE_EXTS.has(path.extname(e.name).toLowerCase()))
     .map((e) => e.name)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-  const files = await Promise.all(
-    names.map(async (name) => {
-      const p = path.join(dir, name);
-      let size = 0;
-      try {
-        size = (await fs.stat(p)).size;
-      } catch {
-        // taille indisponible : tri par taille dégradé
-      }
-      return { name, path: p, url: pathToFileURL(p).href, size };
-    })
-  );
+  // AUCUN stat ici : sur un partage réseau (NAS), des centaines de stat en
+  // parallèle retardaient l'affichage de plusieurs secondes. Les tailles
+  // sont récupérées à la demande (tri par taille du mode Pro : stat-sizes).
+  const files = names.map((name) => {
+    const p = path.join(dir, name);
+    return { name, path: p, url: pathToFileURL(p).href, size: 0 };
+  });
 
   const wanted = filePath.toLowerCase();
   let index = files.findIndex((f) => f.path.toLowerCase() === wanted);
@@ -819,13 +815,45 @@ function createWindow() {
           try {
             const r = await mainWindow.webContents.executeJavaScript(
               `(async () => {
-                 await new Promise((res) => setTimeout(res, 2200));
+                 // état neutre, quel que soit le localStorage d'une session
+                 // précédente : bandeau visible, mode Basic
+                 if (document.body.classList.contains('no-filmstrip')) {
+                   document.getElementById('btn-film').click();
+                 }
+                 if (document.body.classList.contains('pro')) {
+                   document.getElementById('mode-basic').click();
+                 }
+                 await new Promise((res) => setTimeout(res, 2600));
                  const tiles = document.querySelectorAll('.thumb').length;
                  const imgs = [...document.querySelectorAll('.thumb img')];
+                 // le worker de vignettes doit répondre (chemin NAS : c'est
+                 // lui qui fabrique toutes les miniatures)
+                 const workerOk = await new Promise(async (res) => {
+                   try {
+                     const c = document.createElement('canvas');
+                     c.width = 300;
+                     c.height = 200;
+                     const cx = c.getContext('2d');
+                     cx.fillStyle = '#3377ff';
+                     cx.fillRect(0, 0, 300, 200);
+                     const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+                     const buf = await blob.arrayBuffer();
+                     const w = new Worker('thumb-worker.js');
+                     const t = setTimeout(() => res(false), 4000);
+                     w.onmessage = (ev) => {
+                       clearTimeout(t);
+                       res(Boolean(ev.data.ok && ev.data.jpeg && ev.data.jpeg.byteLength));
+                     };
+                     w.postMessage({ id: 1, buf, type: 'image/png' }, [buf]);
+                   } catch {
+                     res(false);
+                   }
+                 });
                  return {
                    tiles,
                    loaded: imgs.length,
                    allBlobThumbs: imgs.length > 0 && imgs.every((im) => im.src.startsWith('blob:')),
+                   workerOk,
                    widths: [...document.querySelectorAll('.thumb')].map((t) => t.offsetWidth),
                  };
                })()`
@@ -1025,16 +1053,126 @@ ipcMain.handle('write-folder-meta', async (_e, { filePath, json }) => {
   }
 });
 
-/* Vignette du bandeau : cache de miniatures de Windows (Explorateur) —
-   aucune image pleine résolution n'est décodée pour une vignette. */
+/* ---------- Vignettes du bandeau ----------
+   1. cache disque persistant de l'application (clé : chemin + mtime + taille)
+      — décisif sur un NAS : après la première visite d'un dossier, les
+      vignettes reviennent instantanément sans toucher au réseau ;
+   2. sinon cache de miniatures de Windows (Explorateur) via nativeImage,
+      et le résultat est mis en cache disque ;
+   3. sinon le renderer décode en réduit et renvoie la vignette produite
+      (store-thumbnail) pour qu'elle soit mise en cache elle aussi. */
+
+const THUMB_CACHE_DIR = path.join(app.getPath('userData'), 'thumb-cache');
+let thumbCacheReady = null;
+
+function ensureThumbCacheDir() {
+  if (!thumbCacheReady) {
+    thumbCacheReady = fs.mkdir(THUMB_CACHE_DIR, { recursive: true }).catch(() => {});
+  }
+  return thumbCacheReady;
+}
+
+function thumbCacheKey(filePath, st) {
+  return crypto
+    .createHash('sha1')
+    .update(`${filePath.toLowerCase()}|${st ? st.mtimeMs : 0}|${st ? st.size : 0}`)
+    .digest('hex');
+}
+
+async function thumbCachePathFor(filePath) {
+  await ensureThumbCacheDir();
+  const st = await fs.stat(filePath).catch(() => null);
+  return st ? path.join(THUMB_CACHE_DIR, `${thumbCacheKey(filePath, st)}.jpg`) : null;
+}
+
 ipcMain.handle('file-thumbnail', async (_e, filePath) => {
   try {
+    const cachePath = await thumbCachePathFor(filePath);
+    if (cachePath) {
+      try {
+        return await fs.readFile(cachePath);
+      } catch {
+        // pas encore en cache
+      }
+    }
     const img = await nativeImage.createThumbnailFromPath(filePath, { width: 256, height: 256 });
     if (!img || img.isEmpty()) return null;
-    return img.toJPEG(82);
+    const jpeg = img.toJPEG(82);
+    if (cachePath) fs.writeFile(cachePath, jpeg).catch(() => {});
+    return jpeg;
   } catch {
     return null;
   }
+});
+
+/* Cache disque UNIQUEMENT — pour les dossiers réseau : l'extraction shell
+   rapatrie le fichier entier dans le processus principal (qui route aussi
+   les entrées clavier/souris) ; sur un NAS on préfère le décodage réduit
+   côté renderer, dans un worker. */
+ipcMain.handle('file-thumbnail-cached', async (_e, filePath) => {
+  try {
+    const cachePath = await thumbCachePathFor(filePath);
+    if (!cachePath) return null;
+    return await fs.readFile(cachePath);
+  } catch {
+    return null;
+  }
+});
+
+/* Vignette produite par le renderer (formats que le shell ne couvre pas) :
+   mise en cache disque pour les prochaines visites. */
+ipcMain.handle('store-thumbnail', async (_e, { filePath, data }) => {
+  try {
+    await ensureThumbCacheDir();
+    const st = await fs.stat(filePath).catch(() => null);
+    if (!st) return false;
+    await fs.writeFile(
+      path.join(THUMB_CACHE_DIR, `${thumbCacheKey(filePath, st)}.jpg`),
+      Buffer.from(data)
+    );
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+/* Début de fichier seulement (métadonnées JPEG/PNG du mode Pro) : évite de
+   rapatrier un fichier de plusieurs dizaines de Mo depuis le NAS pour lire
+   quelques en-têtes. */
+ipcMain.handle('read-file-head', async (_e, { filePath, bytes }) => {
+  let fh = null;
+  try {
+    fh = await fs.open(filePath, 'r');
+    const st = await fh.stat();
+    const n = Math.max(1, Math.min(st.size, bytes || 262144));
+    const buf = Buffer.alloc(n);
+    await fh.read(buf, 0, n, 0);
+    return { data: buf, size: st.size };
+  } catch {
+    return null;
+  } finally {
+    if (fh) await fh.close().catch(() => {});
+  }
+});
+
+/* Tailles des fichiers à la demande (tri par taille du mode Pro),
+   avec un parallélisme borné — jamais des centaines de stat d'un coup. */
+ipcMain.handle('stat-sizes', async (_e, paths) => {
+  const out = new Array(paths.length).fill(0);
+  let next = 0;
+  const worker = async () => {
+    while (next < paths.length) {
+      const i = next;
+      next += 1;
+      try {
+        out[i] = (await fs.stat(paths[i])).size;
+      } catch {
+        // taille indisponible : 0
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, paths.length) }, worker));
+  return out;
 });
 
 /* Projet Studio (.istudio) : montage complet avec ses calques. */

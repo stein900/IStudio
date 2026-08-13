@@ -37,9 +37,17 @@ window.Pro = (() => {
   const tags = { data: {}, timer: null, anchor: null };
   let master = null;
   let sortAsc = true;
-  const compareState = { mode: 'off', bIndex: null, urls: [] };
+  let sizesLoaded = false; // tailles récupérées à la demande (tri par taille)
+  const compareState = { mode: 'off', aIndex: null, bIndex: null, urls: [] };
+  let compareToken = 0; // invalide les rendus asynchrones périmés
 
   const luma = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+  /** Couleur du thème courant (les canvas se redessinent au changement). */
+  function cssVar(name, fallback) {
+    const v = getComputedStyle(document.body).getPropertyValue(name).trim();
+    return v || fallback;
+  }
 
   function starSvg(filled) {
     return (
@@ -141,7 +149,7 @@ window.Pro = (() => {
           <button id="pro-cmp-side" class="pro-btn">Côte à côte</button>
           <button id="pro-cmp-diff" class="pro-btn">Différence</button>
         </div>
-        <div class="pro-mini">Ctrl + clic sur une vignette : choisir l'image B (sinon : la précédente).</div>
+        <div class="pro-mini">A et B se choisissent dans la barre au-dessus de l'aperçu (listes déroulantes, bouton d'échange). Raccourci : Ctrl + clic sur une vignette pour l'image B. Les flèches changent l'image A.</div>
       </div>
       <div class="pro-sec">
         <span class="pro-label">Image</span>
@@ -381,7 +389,7 @@ window.Pro = (() => {
     }
     const W = els.hist.width;
     const H = els.hist.height;
-    ctx.fillStyle = '#131318';
+    ctx.fillStyle = cssVar('--chart-bg', '#131318');
     ctx.fillRect(0, 0, W, H);
     let max = 1;
     for (let i = 0; i < 256; i += 1) max = Math.max(max, hl[i], hr[i], hg[i], hb[i]);
@@ -405,7 +413,7 @@ window.Pro = (() => {
         ctx.stroke();
       }
     };
-    plot(hl, 'rgba(230, 230, 235, 0.35)', true);
+    plot(hl, cssVar('--chart-luma', 'rgba(230, 230, 235, 0.35)'), true);
     plot(hr, 'rgba(255, 90, 90, 0.9)', false);
     plot(hg, 'rgba(90, 220, 120, 0.9)', false);
     plot(hb, 'rgba(110, 160, 255, 0.9)', false);
@@ -542,6 +550,57 @@ window.Pro = (() => {
       ctx.stroke();
     }
 
+    /* Valeurs des pixels au fort zoom — mêmes seuils que Studio :
+       grille de pixels à partir de 1600 %, valeurs R V B lisibles dans
+       chaque pixel à partir de 3200 % (seulement les pixels visibles). */
+    if (full && state.zoom >= 16 && image.naturalWidth) {
+      const sc = state.zoom;
+      const o = imageToScreen(0, 0); // origine de l'image en px écran
+      const x0 = Math.max(0, Math.floor(-o.x / sc));
+      const y0 = Math.max(0, Math.floor(-o.y / sc));
+      const x1 = Math.min(full.w, Math.ceil((stage.clientWidth - o.x) / sc));
+      const y1 = Math.min(full.h, Math.ceil((stage.clientHeight - o.y) / sc));
+      if (x1 > x0 && y1 > y0) {
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(128, 128, 128, 0.35)';
+        ctx.beginPath();
+        for (let x = x0; x <= x1; x += 1) {
+          ctx.moveTo(o.x + x * sc, o.y + y0 * sc);
+          ctx.lineTo(o.x + x * sc, o.y + y1 * sc);
+        }
+        for (let y = y0; y <= y1; y += 1) {
+          ctx.moveTo(o.x + x0 * sc, o.y + y * sc);
+          ctx.lineTo(o.x + x1 * sc, o.y + y * sc);
+        }
+        ctx.stroke();
+
+        if (sc >= 32) {
+          // valeurs de l'image d'origine, même si un canal isolé est affiché
+          const data = full.ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+          const fontPx = Math.max(8, Math.min(14, sc / 4.5));
+          ctx.font = `500 ${fontPx}px Consolas, monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          for (let y = y0; y < y1; y += 1) {
+            for (let x = x0; x < x1; x += 1) {
+              const i = ((y - y0) * (x1 - x0) + (x - x0)) * 4;
+              if (data[i + 3] === 0) continue; // pixel transparent
+              const r = data[i];
+              const g = data[i + 1];
+              const b = data[i + 2];
+              const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+              ctx.fillStyle = lum < 140 ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.8)';
+              const px = o.x + (x + 0.5) * sc;
+              const py = o.y + (y + 0.5) * sc;
+              ctx.fillText(String(r), px, py - sc * 0.24);
+              ctx.fillText(String(g), px, py);
+              ctx.fillText(String(b), px, py + sc * 0.24);
+            }
+          }
+        }
+      }
+    }
+
     if (measureLine) {
       const a = imageToScreen(measureLine.ax, measureLine.ay);
       const b = imageToScreen(measureLine.bx, measureLine.by);
@@ -575,7 +634,7 @@ window.Pro = (() => {
     const H = els.profile.height;
     ctx.clearRect(0, 0, W, H);
     if (!full || !measureLine) return;
-    ctx.fillStyle = '#131318';
+    ctx.fillStyle = cssVar('--chart-bg', '#131318');
     ctx.fillRect(0, 0, W, H);
     const N = 220;
     const rs = [];
@@ -607,7 +666,7 @@ window.Pro = (() => {
     plot(rs, 'rgba(255, 90, 90, 0.7)', 1);
     plot(gs, 'rgba(90, 220, 120, 0.7)', 1);
     plot(bs, 'rgba(110, 160, 255, 0.7)', 1);
-    plot(ls, 'rgba(240, 240, 245, 0.95)', 1.6);
+    plot(ls, cssVar('--chart-line', 'rgba(240, 240, 245, 0.95)'), 1.6);
   }
 
   /* ================= Notes & drapeaux ================= */
@@ -698,8 +757,26 @@ window.Pro = (() => {
 
   /* ================= Tri / filtre de la galerie ================= */
 
+  /** Les tailles ne sont plus lues à l'ouverture du dossier (trop coûteux
+      sur un NAS) : elles sont récupérées ici, une seule fois, au premier
+      tri par taille — avec un parallélisme borné côté processus principal. */
+  async function ensureSizes() {
+    const files = master;
+    const sizes = await window.viewer.statSizes(files.map((f) => f.path));
+    if (master !== files) return; // le dossier a changé entre-temps
+    files.forEach((f, i) => {
+      f.size = sizes[i] || 0;
+    });
+    sizesLoaded = true;
+  }
+
   function applyGallery() {
     if (!master) return;
+    if (els.sort.value === 'size' && !sizesLoaded && master.length) {
+      els.galleryCount.textContent = 'Lecture des tailles…';
+      ensureSizes().then(() => applyGallery());
+      return;
+    }
     let files = master.slice();
     const fv = els.filter.value;
     if (fv === 'pick' || fv === 'reject') files = files.filter((f) => flagOf(f) === fv);
@@ -734,15 +811,20 @@ window.Pro = (() => {
     for (const u of compareState.urls) URL.revokeObjectURL(u);
     compareState.urls = [];
     if (mode === 'off') {
+      compareToken += 1; // annule tout rendu en cours
       els.compare.hidden = true;
       els.compare.innerHTML = '';
       image.style.visibility = '';
       drawOverlay();
       return;
     }
+    if (compareState.aIndex == null || !state.files[compareState.aIndex]) {
+      compareState.aIndex = state.index;
+    }
     buildCompare();
   }
 
+  /** Ctrl + clic sur une vignette : choisit l'image B. */
   function setCompareIndex(i) {
     compareState.bIndex = i;
     if (compareState.mode === 'off') setCompare('side');
@@ -759,28 +841,111 @@ window.Pro = (() => {
     return file.url;
   }
 
+  function cmpIconBtn(title, svgInner, onClick) {
+    const b = document.createElement('button');
+    b.className = 'pro-btn pro-cmp-icon';
+    b.title = title;
+    b.innerHTML =
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      svgInner +
+      '</svg>';
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  /** Barre de choix des images comparées : A [select] ⇄ B [select] ✕. */
+  function buildCompareBar() {
+    const bar = document.createElement('div');
+    bar.className = 'pro-cmp-bar';
+
+    const mkTag = (t) => {
+      const s = document.createElement('span');
+      s.className = 'pro-cmp-tag';
+      s.textContent = t;
+      return s;
+    };
+    const mkSelect = (which) => {
+      const sel = document.createElement('select');
+      sel.title = which === 'a' ? 'Choisir l’image A' : 'Choisir l’image B';
+      state.files.forEach((f, i) => {
+        const opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = f.name;
+        sel.appendChild(opt);
+      });
+      sel.value = String(which === 'a' ? compareState.aIndex : compareState.bIndex);
+      sel.addEventListener('change', () => {
+        const v = Number(sel.value);
+        if (which === 'a') compareState.aIndex = v;
+        else compareState.bIndex = v;
+        buildCompare();
+      });
+      return sel;
+    };
+
+    bar.append(
+      mkTag('A'),
+      mkSelect('a'),
+      cmpIconBtn(
+        'Échanger A et B',
+        '<polyline points="17 4 21 8 17 12" /><line x1="21" y1="8" x2="7" y2="8" />' +
+          '<polyline points="7 12 3 16 7 20" /><line x1="3" y1="16" x2="17" y2="16" />',
+        () => {
+          const t = compareState.aIndex;
+          compareState.aIndex = compareState.bIndex;
+          compareState.bIndex = t;
+          buildCompare();
+        }
+      ),
+      mkTag('B'),
+      mkSelect('b'),
+      cmpIconBtn(
+        'Fermer la comparaison',
+        '<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />',
+        () => setCompare('off')
+      )
+    );
+    return bar;
+  }
+
   async function buildCompare() {
-    const a = currentFile();
-    if (!a || state.files.length < 2) return;
-    let bi = compareState.bIndex;
-    if (bi == null || bi === state.index || !state.files[bi]) {
-      bi = (state.index - 1 + state.files.length) % state.files.length;
+    if (compareState.mode === 'off' || state.files.length < 2) return;
+    const n = state.files.length;
+    if (compareState.aIndex == null || !state.files[compareState.aIndex]) {
+      compareState.aIndex = Math.max(0, state.index);
     }
-    const b = state.files[bi];
+    if (
+      compareState.bIndex == null ||
+      compareState.bIndex === compareState.aIndex ||
+      !state.files[compareState.bIndex]
+    ) {
+      compareState.bIndex = (compareState.aIndex - 1 + n) % n;
+    }
+    const a = state.files[compareState.aIndex];
+    const b = state.files[compareState.bIndex];
+    const token = ++compareToken;
+
     els.compare.hidden = false;
     image.style.visibility = 'hidden';
     els.compare.innerHTML = '';
+    els.compare.appendChild(buildCompareBar());
+    const body = document.createElement('div');
+    body.className = 'pro-cmp-body';
+    els.compare.appendChild(body);
+    drawOverlay();
 
     if (compareState.mode === 'side') {
-      for (const [file, tag] of [[b, 'B'], [a, 'A']]) {
+      for (const [file, tag] of [[a, 'A'], [b, 'B']]) {
         const fig = document.createElement('div');
         fig.className = 'pro-cmp-cell';
         const img = document.createElement('img');
         img.src = await srcFor(file);
+        if (token !== compareToken) return; // sélection changée entre-temps
         const cap = document.createElement('span');
         cap.textContent = `${tag} — ${file.name}`;
         fig.append(img, cap);
-        els.compare.appendChild(fig);
+        body.appendChild(fig);
       }
       return;
     }
@@ -788,6 +953,11 @@ window.Pro = (() => {
     // Différence |A − B| amplifiée ×4
     const [da, db] = await Promise.all([decodeCurrentFile(a).catch(() => null), decodeCurrentFile(b).catch(() => null)]);
     if (!da || !db) return;
+    if (token !== compareToken) {
+      URL.revokeObjectURL(da.url);
+      URL.revokeObjectURL(db.url);
+      return;
+    }
     const w = Math.min(da.img.naturalWidth, db.img.naturalWidth, 1400);
     const ratio = w / Math.min(da.img.naturalWidth, db.img.naturalWidth);
     const h = Math.round(Math.min(da.img.naturalHeight, db.img.naturalHeight) * ratio);
@@ -822,7 +992,7 @@ window.Pro = (() => {
     const cap = document.createElement('span');
     cap.textContent = `Différence ×4 — A : ${a.name} · B : ${b.name}`;
     cell.append(c, cap);
-    els.compare.appendChild(cell);
+    body.appendChild(cell);
   }
 
   /* ================= Métadonnées : format, ICC, EXIF ================= */
@@ -1028,15 +1198,19 @@ window.Pro = (() => {
     fillGrid(els.exif, []);
     if (!f || image.hidden) return;
     const ext = extOf(f.name);
-    const data = await window.viewer.readFile(f.path);
-    if (!data || currentFile() !== f) return;
+    // seuls les premiers octets sont lus (les en-têtes JPEG/PNG y vivent) :
+    // pas de rapatriement d'un fichier de 30 Mo depuis le NAS pour ça
+    const head = await window.viewer.readFileHead(f.path, 2 * 1024 * 1024);
+    if (!head || !head.data || currentFile() !== f) return;
+    const data = head.data;
+    const fileSize = head.size;
     const w = image.naturalWidth;
     const h = image.naturalHeight;
     const rows = [
       ['Dimensions', `${w} × ${h} px`],
       ['Ratio', ratioLabel(w, h)],
       ['Mégapixels', `${((w * h) / 1e6).toFixed(2)} Mpx`],
-      ['Poids', formatBytes(data.byteLength)],
+      ['Poids', formatBytes(fileSize)],
       ['Format', ext.toUpperCase()],
     ];
     let bits = 8;
@@ -1066,8 +1240,8 @@ window.Pro = (() => {
       rows.push(['Espace couleur', 'sRGB (présumé)']);
     }
     const raw = w * h * channels * (bits / 8);
-    if (raw > 0 && data.byteLength > 0) {
-      rows.push(['Compression', `≈ ${(raw / data.byteLength).toFixed(1)}:1 (${(data.byteLength / (w * h)).toFixed(2)} o/px)`]);
+    if (raw > 0 && fileSize > 0) {
+      rows.push(['Compression', `≈ ${(raw / fileSize).toFixed(1)}:1 (${(fileSize / (w * h)).toFixed(2)} o/px)`]);
     }
     fillGrid(els.info, rows);
     fillGrid(els.exif, exifRows);
@@ -1121,7 +1295,12 @@ window.Pro = (() => {
 
   async function onContext() {
     if (!on) return;
+    // nouveau dossier : les indices A/B de la comparaison n'ont plus de sens
+    compareState.aIndex = null;
+    compareState.bIndex = null;
+    if (compareState.mode !== 'off') setCompare('off');
     master = state.files.slice();
+    sizesLoaded = false;
     tags.data = {};
     tags.anchor = master.length ? master[0].path : null;
     els.filter.value = 'all';
@@ -1146,14 +1325,17 @@ window.Pro = (() => {
   async function onImageShown() {
     if (!on) return;
     layoutPanel();
-    // état par image
+    // état par image — mais le canal choisi est CONSERVÉ d'une image à
+    // l'autre (réappliqué plus bas), pour inspecter tout un dataset sur
+    // le même canal sans le re-sélectionner à chaque fois
     if (channelUrl) {
       URL.revokeObjectURL(channelUrl);
       channelUrl = null;
     }
     baseSrc = null;
-    channelMode = 'rgb';
-    for (const b of els.chan.querySelectorAll('button')) b.classList.toggle('is-active', b.dataset.ch === 'rgb');
+    for (const b of els.chan.querySelectorAll('button')) {
+      b.classList.toggle('is-active', b.dataset.ch === channelMode);
+    }
     measureLine = null;
     els.measureInfo.textContent = 'Glisser sur l’image pour mesurer un segment.';
     updateProfile();
@@ -1171,7 +1353,11 @@ window.Pro = (() => {
     computeInfo();
     await ensureFull();
     computeHistogram();
-    if (compareState.mode !== 'off') buildCompare();
+    if (channelMode !== 'rgb' && currentFile() === f) await setChannel(channelMode);
+    if (compareState.mode !== 'off') {
+      compareState.aIndex = state.index; // la navigation pilote l'image A
+      buildCompare();
+    }
   }
 
   /** Appelé quand l'élément <img> vient de charger. Retourne true si le mode
@@ -1179,12 +1365,18 @@ window.Pro = (() => {
   function onImageElementLoad() {
     if (!on) return false;
     if (pendingView) {
-      state.zoom = pendingView.zoom;
-      state.panX = pendingView.panX;
-      state.panY = pendingView.panY;
-      state.fit = pendingView.fit;
+      const pv = pendingView;
       pendingView = null;
-      applyTransform();
+      if (pv.fit) {
+        // vue ajustée : recalculée (l'image affichée peut avoir changé)
+        setFit();
+      } else {
+        state.zoom = pv.zoom;
+        state.panX = pv.panX;
+        state.panY = pv.panY;
+        state.fit = false;
+        applyTransform();
+      }
       return true;
     }
     if (lockView && !state.fit) {
@@ -1196,6 +1388,14 @@ window.Pro = (() => {
 
   function onViewChanged() {
     if (!on) return;
+    drawOverlay();
+  }
+
+  /** Changement de thème clair/sombre : redessine les canvas du panneau. */
+  function onTheme() {
+    if (!on) return;
+    computeHistogram();
+    updateProfile();
     drawOverlay();
   }
 
@@ -1238,6 +1438,7 @@ window.Pro = (() => {
     onViewChanged,
     onContext,
     onFilmstrip: decorateTiles,
+    onTheme,
     setCompareIndex,
   };
 })();
