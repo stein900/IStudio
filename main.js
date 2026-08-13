@@ -4,6 +4,7 @@ const fs = require('fs/promises');
 const fssync = require('fs');
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
+const { spawn } = require('child_process');
 
 const IMAGE_EXTS = new Set([
   '.jpg', '.jpeg', '.jfif', '.png', '.gif', '.bmp',
@@ -56,8 +57,16 @@ if (process.argv.includes('--smoke-psd') && !fileFromArgv(process.argv)) {
   }
 }
 
+/* Plusieurs fenêtres : ouvrir une image alors qu'une instance tourne déjà
+   (même occupée dans Studio ou Paint) crée une NOUVELLE fenêtre.
+   mainWindow reste la première fenêtre (référence des tests smoke). */
 let mainWindow = null;
 let pendingFile = fileFromArgv(process.argv);
+const pendingContexts = new Map(); // webContents.id -> Promise<contexte>
+
+function senderWindow(e) {
+  return BrowserWindow.fromWebContents(e.sender);
+}
 
 function fileFromArgv(argv) {
   for (const arg of argv.slice(1)) {
@@ -114,11 +123,11 @@ async function buildContext(filePath) {
 app.setName('IStudio');
 app.setAppUserModelId('fr.ahg.istudio.viewer');
 
-function createWindow() {
+function createWindow(contextPromise = null) {
   // icône de fenêtre en dev (l'application installée reprend l'icône de
   // l'exécutable) : l'ICO multi-résolutions évite tout flou de mise à l'échelle
   const iconPath = path.join(__dirname, 'build', 'icon.ico');
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     title: 'IStudio',
     ...(fssync.existsSync(iconPath) ? { icon: iconPath } : {}),
     width: 1280,
@@ -134,20 +143,25 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  const wcId = win.webContents.id;
+  if (contextPromise) pendingContexts.set(wcId, contextPromise);
+  const isFirst = mainWindow === null;
+  if (isFirst) mainWindow = win;
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
-  mainWindow.on('enter-full-screen', () => {
-    mainWindow.webContents.send('fullscreen-changed', true);
+  win.once('ready-to-show', () => win.show());
+  win.on('enter-full-screen', () => {
+    win.webContents.send('fullscreen-changed', true);
   });
-  mainWindow.on('leave-full-screen', () => {
-    mainWindow.webContents.send('fullscreen-changed', false);
+  win.on('leave-full-screen', () => {
+    win.webContents.send('fullscreen-changed', false);
   });
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  win.on('closed', () => {
+    pendingContexts.delete(wcId);
+    if (mainWindow === win) mainWindow = null;
   });
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
-  if (SMOKE) {
+  if (SMOKE && isFirst) {
     mainWindow.webContents.on('console-message', (_e, level, message) => {
       console.log(`[renderer:${level}] ${message}`);
     });
@@ -232,6 +246,10 @@ function createWindow() {
                  await new Promise((res) => setTimeout(res, 2800));
                  const panel = document.getElementById('pro-panel');
                  const panelOpen = Boolean(panel) && !panel.hidden;
+                 // la ligne « Vue » : grille + pas + 1:1 + verrou côte à côte
+                 const vueTops = ['pro-grid', 'pro-grid-step', 'pro-100', 'pro-lock']
+                   .map((id) => document.getElementById(id).getBoundingClientRect().top);
+                 const vueOneLine = Math.max(...vueTops) - Math.min(...vueTops) < 4;
                  const histInk = (() => {
                    const c = document.getElementById('pro-hist');
                    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
@@ -287,7 +305,7 @@ function createWindow() {
                  await new Promise((res) => setTimeout(res, 400));
                  const basicBack = panel.hidden && !document.body.classList.contains('pro');
                  return {
-                   panelOpen, histInk, inspector, channelSwapped,
+                   panelOpen, vueOneLine, histInk, inspector, channelSwapped,
                    hasBits: infoText.includes('Bits'), hasChroma: infoText.includes('Chroma') || infoText.includes('Espace'),
                    stars, badge, picked, filtered, unfiltered, compareCells, gridInk, basicBack,
                  };
@@ -808,6 +826,132 @@ function createWindow() {
           }
           app.quit();
         }, 1500);
+      } else if (process.argv.includes('--smoke-gallery')) {
+        // Galerie Global : grille remplie, recherche, tri par taille
+        // (stats à la demande), filtre par format, clavier, clic.
+        setTimeout(async () => {
+          try {
+            const r = await mainWindow.webContents.executeJavaScript(
+              `(async () => {
+                 await new Promise((res) => setTimeout(res, 1800));
+                 document.getElementById('btn-gallery').click();
+                 await new Promise((res) => setTimeout(res, 1200));
+                 const open = !document.getElementById('gallery').hidden;
+                 const tiles = document.querySelectorAll('.gtile').length;
+                 const withThumbs = document.querySelectorAll('.gtile img').length;
+                 const captions = document.querySelectorAll('.gtile-caption').length;
+                 // libellés taille · date remplis paresseusement (stat unitaire)
+                 const metaFilled = [...document.querySelectorAll('.gtile-meta')]
+                   .filter((m) => m.textContent.trim().length > 0).length;
+                 // la barre d'outils ne garde que l'essentiel pendant la galerie
+                 const toolbarClean =
+                   document.getElementById('btn-rotate').offsetParent === null &&
+                   document.getElementById('btn-zoom-in').offsetParent === null &&
+                   document.getElementById('btn-open').offsetParent !== null;
+                 // aucune tuile ne déborde sur sa voisine (pas de chevauchement)
+                 const rects = [...document.querySelectorAll('.gtile')].map((t) => t.getBoundingClientRect());
+                 let noOverlap = true;
+                 for (let a = 0; a < rects.length && noOverlap; a += 1) {
+                   for (let b = a + 1; b < rects.length; b += 1) {
+                     const ra = rects[a];
+                     const rb = rects[b];
+                     if (ra.left < rb.right - 1 && rb.left < ra.right - 1 &&
+                         ra.top < rb.bottom - 1 && rb.top < ra.bottom - 1) {
+                       noOverlap = false;
+                       break;
+                     }
+                   }
+                 }
+                 const countText = document.getElementById('gallery-count').textContent;
+                 // recherche
+                 const search = document.getElementById('gallery-search');
+                 search.value = 'img_2';
+                 search.dispatchEvent(new Event('input', { bubbles: true }));
+                 await new Promise((res) => setTimeout(res, 400));
+                 const filtered = document.querySelectorAll('.gtile').length;
+                 search.value = '';
+                 search.dispatchEvent(new Event('input', { bubbles: true }));
+                 await new Promise((res) => setTimeout(res, 400));
+                 // tri par taille : les stats se chargent à la demande
+                 const sort = document.getElementById('gallery-sort');
+                 sort.value = 'size';
+                 sort.dispatchEvent(new Event('change', { bubbles: true }));
+                 await new Promise((res) => setTimeout(res, 900));
+                 const sortedTiles = document.querySelectorAll('.gtile').length;
+                 // filtre format : PNG présent
+                 const fmt = document.getElementById('gallery-format');
+                 const fmtOptions = [...fmt.options].map((o) => o.value);
+                 // navigation clavier : flèche droite puis Entrée
+                 window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+                 await new Promise((res) => setTimeout(res, 200));
+                 const selMoved = [...document.querySelectorAll('.gtile')].findIndex((t) => t.classList.contains('selected'));
+                 window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                 await new Promise((res) => setTimeout(res, 700));
+                 const closedAfterEnter = document.getElementById('gallery').hidden;
+                 const imageShown = !document.getElementById('image').hidden;
+                 // réouverture puis Échap
+                 document.getElementById('btn-gallery').click();
+                 await new Promise((res) => setTimeout(res, 400));
+                 window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                 await new Promise((res) => setTimeout(res, 200));
+                 const closedAfterEsc = document.getElementById('gallery').hidden;
+                 return {
+                   open, tiles, withThumbs, captions, metaFilled, toolbarClean, noOverlap,
+                   countText, filtered, sortedTiles,
+                   fmtOptions, selMoved, closedAfterEnter, imageShown, closedAfterEsc,
+                 };
+               })()`
+            );
+            console.log(`SMOKE GALLERY: ${JSON.stringify(r)}`);
+          } catch (err) {
+            console.log(`SMOKE GALLERY ERROR: ${err.message}`);
+          }
+          app.quit();
+        }, 1500);
+      } else if (process.argv.includes('--smoke-tabs')) {
+        // Onglets : « + » ouvre l'accueil (barre épurée, panneau Pro absent),
+        // la bascule restaure l'image, fermeture et détachement en fenêtre.
+        setTimeout(async () => {
+          try {
+            const r = await mainWindow.webContents.executeJavaScript(
+              `(async () => {
+                 await new Promise((res) => setTimeout(res, 1500));
+                 const tabCount0 = document.querySelectorAll('.tab').length;
+                 const title0 = document.querySelector('.tab .tab-title').textContent;
+                 document.getElementById('tab-add').click();
+                 await new Promise((res) => setTimeout(res, 300));
+                 const tabCount1 = document.querySelectorAll('.tab').length;
+                 const atHome1 = document.body.classList.contains('at-home');
+                 const toolbarClean = document.getElementById('btn-rotate').offsetParent === null;
+                 const proPanel = document.getElementById('pro-panel');
+                 const proHidden = !proPanel || proPanel.offsetParent === null;
+                 document.querySelectorAll('.tab')[0].click();
+                 await new Promise((res) => setTimeout(res, 900));
+                 const backImage =
+                   !document.getElementById('image').hidden &&
+                   document.getElementById('image').naturalWidth > 0;
+                 const atHome2 = document.body.classList.contains('at-home');
+                 const t2 = document.querySelectorAll('.tab')[1];
+                 t2.querySelector('.tab-actions button:last-child').click();
+                 await new Promise((res) => setTimeout(res, 300));
+                 const tabCount2 = document.querySelectorAll('.tab').length;
+                 document.querySelector('.tab .tab-actions button:first-child').click();
+                 await new Promise((res) => setTimeout(res, 1500));
+                 const tabCount3 = document.querySelectorAll('.tab').length;
+                 const homeAfterDetach = document.body.classList.contains('at-home');
+                 return {
+                   tabCount0, title0, tabCount1, atHome1, toolbarClean, proHidden,
+                   backImage, atHome2, tabCount2, tabCount3, homeAfterDetach,
+                 };
+               })()`
+            );
+            const winCount = BrowserWindow.getAllWindows().length;
+            console.log(`SMOKE TABS: ${JSON.stringify({ ...r, winCount })}`);
+          } catch (err) {
+            console.log(`SMOKE TABS ERROR: ${err.message}`);
+          }
+          app.quit();
+        }, 1500);
       } else {
         // --smoke simple : les vignettes du bandeau doivent être des
         // miniatures légères (blob:), jamais le fichier original.
@@ -867,53 +1011,67 @@ function createWindow() {
       }
     });
   }
+  return win;
 }
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', async (_event, argv) => {
+  app.on('second-instance', (_event, argv) => {
     const file = fileFromArgv(argv);
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-      if (file) {
-        mainWindow.webContents.send('open-context', await buildContext(file));
-      }
+    if (file) {
+      // Une image ouverte depuis l'Explorateur alors que l'application
+      // tourne déjà (peut-être occupée dans Studio/Paint) : NOUVELLE fenêtre.
+      createWindow(buildContext(file));
+      return;
+    }
+    // Lancement sans fichier : on ramène une fenêtre existante au premier plan.
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    } else {
+      createWindow();
     }
   });
 
   // macOS uniquement, sans effet sous Windows mais inoffensif.
-  app.on('open-file', async (event, filePath) => {
+  app.on('open-file', (event, filePath) => {
     event.preventDefault();
-    if (mainWindow) {
-      mainWindow.webContents.send('open-context', await buildContext(filePath));
+    if (app.isReady()) {
+      createWindow(buildContext(filePath));
     } else {
       pendingFile = filePath;
     }
   });
 
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => {
+    createWindow(pendingFile ? buildContext(pendingFile) : null);
+    pendingFile = null;
+  });
 
   app.on('window-all-closed', () => {
     app.quit();
   });
 }
 
-ipcMain.handle('renderer-ready', async () => {
-  if (pendingFile) {
-    const ctx = await buildContext(pendingFile);
-    pendingFile = null;
-    return ctx;
-  }
-  return null;
+ipcMain.handle('renderer-ready', async (e) => {
+  const p = pendingContexts.get(e.sender.id);
+  pendingContexts.delete(e.sender.id);
+  return p ? await p : null;
+});
+
+/* Détachement d'onglet / ouverture volontaire d'une nouvelle fenêtre. */
+ipcMain.handle('open-new-window', (_e, filePath) => {
+  createWindow(filePath ? buildContext(filePath) : null);
+  return true;
 });
 
 ipcMain.handle('reload-context', async (_e, filePath) => buildContext(filePath));
 
-ipcMain.handle('pick-file', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+ipcMain.handle('pick-file', async (e) => {
+  const result = await dialog.showOpenDialog(senderWindow(e), {
     title: 'Ouvrir une image',
     properties: ['openFile'],
     filters: [
@@ -928,14 +1086,16 @@ ipcMain.handle('pick-file', async () => {
   return buildContext(result.filePaths[0]);
 });
 
-ipcMain.handle('set-title', (_e, title) => {
-  if (mainWindow) mainWindow.setTitle(title);
+ipcMain.handle('set-title', (e, title) => {
+  const win = senderWindow(e);
+  if (win) win.setTitle(title);
 });
 
-ipcMain.handle('toggle-fullscreen', () => {
-  if (!mainWindow) return false;
-  const next = !mainWindow.isFullScreen();
-  mainWindow.setFullScreen(next);
+ipcMain.handle('toggle-fullscreen', (e) => {
+  const win = senderWindow(e);
+  if (!win) return false;
+  const next = !win.isFullScreen();
+  win.setFullScreen(next);
   return next;
 });
 
@@ -961,8 +1121,8 @@ ipcMain.handle('read-file', async (_e, filePath) => {
   }
 });
 
-ipcMain.handle('delete-file', async (_e, filePath) => {
-  const { response } = await dialog.showMessageBox(mainWindow, {
+ipcMain.handle('delete-file', async (e, filePath) => {
+  const { response } = await dialog.showMessageBox(senderWindow(e), {
     type: 'warning',
     buttons: ['Supprimer', 'Annuler'],
     defaultId: 0,
@@ -1016,9 +1176,9 @@ ipcMain.handle('save-in-place', async (_e, { sourcePath, outExt, data }) => {
 
 /* Choix du mode d'enregistrement des éditeurs (Paint, Studio) :
    écraser le fichier d'origine, ou créer une copie à côté sans y toucher. */
-ipcMain.handle('ask-save-mode', async (_e, fileName) => {
+ipcMain.handle('ask-save-mode', async (e, fileName) => {
   if (SMOKE) return process.argv.includes('--smoke-save-copy') ? 'copy' : 'overwrite';
-  const { response } = await dialog.showMessageBox(mainWindow, {
+  const { response } = await dialog.showMessageBox(senderWindow(e), {
     type: 'question',
     buttons: ['Écraser l’original', 'Enregistrer une copie', 'Annuler'],
     defaultId: 0,
@@ -1155,6 +1315,27 @@ ipcMain.handle('read-file-head', async (_e, { filePath, bytes }) => {
   }
 });
 
+/* Taille + date de modification à la demande (galerie Global : tri par
+   date ou taille), avec un parallélisme borné. */
+ipcMain.handle('stat-many', async (_e, paths) => {
+  const out = new Array(paths.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < paths.length) {
+      const i = next;
+      next += 1;
+      try {
+        const st = await fs.stat(paths[i]);
+        out[i] = { size: st.size, mtime: st.mtimeMs };
+      } catch {
+        // infos indisponibles : null
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, paths.length) }, worker));
+  return out;
+});
+
 /* Tailles des fichiers à la demande (tri par taille du mode Pro),
    avec un parallélisme borné — jamais des centaines de stat d'un coup. */
 ipcMain.handle('stat-sizes', async (_e, paths) => {
@@ -1178,12 +1359,12 @@ ipcMain.handle('stat-sizes', async (_e, paths) => {
 /* Projet Studio (.istudio) : montage complet avec ses calques. */
 let lastSmokeProject = null;
 
-ipcMain.handle('save-project', async (_e, { suggestedName, json }) => {
+ipcMain.handle('save-project', async (e, { suggestedName, json }) => {
   let filePath;
   if (SMOKE) {
     filePath = path.join(app.getPath('temp'), suggestedName);
   } else {
-    const r = await dialog.showSaveDialog(mainWindow, {
+    const r = await dialog.showSaveDialog(senderWindow(e), {
       title: 'Enregistrer le projet',
       defaultPath: suggestedName,
       filters: [{ name: 'Projet IStudio', extensions: ['istudio'] }],
@@ -1200,13 +1381,13 @@ ipcMain.handle('save-project', async (_e, { suggestedName, json }) => {
   }
 });
 
-ipcMain.handle('open-project', async () => {
+ipcMain.handle('open-project', async (e) => {
   let filePath;
   if (SMOKE) {
     filePath = lastSmokeProject;
     if (!filePath) return null;
   } else {
-    const r = await dialog.showOpenDialog(mainWindow, {
+    const r = await dialog.showOpenDialog(senderWindow(e), {
       title: 'Ouvrir un projet',
       filters: [{ name: 'Projet IStudio', extensions: ['istudio'] }],
       properties: ['openFile'],
@@ -1224,7 +1405,7 @@ ipcMain.handle('open-project', async () => {
 /* Export du montage Studio : boîte « Enregistrer sous » native. */
 let lastSmokeExport = null;
 
-ipcMain.handle('export-image', async (_e, { suggestedName, data }) => {
+ipcMain.handle('export-image', async (e, { suggestedName, data }) => {
   if (SMOKE) {
     const p = path.join(app.getPath('temp'), suggestedName);
     try {
@@ -1235,7 +1416,7 @@ ipcMain.handle('export-image', async (_e, { suggestedName, data }) => {
       return null;
     }
   }
-  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+  const { canceled, filePath } = await dialog.showSaveDialog(senderWindow(e), {
     title: 'Exporter l’image',
     defaultPath: suggestedName,
     filters: [
@@ -1273,10 +1454,277 @@ ipcMain.handle('save-copy', async (_e, { sourcePath, outExt, data }) => {
   }
 });
 
-ipcMain.handle('print-file', async (_e, fileUrl) => {
+/* ---------- Upscale IA ----------
+   Moteur : upscayl-bin.exe (Real-ESRGAN via NCNN/Vulkan), un exécutable
+   autonome livré dans code_source_upscale/. L'upscale est donc un simple
+   appel de processus : entrée -> sortie PNG, progression lue sur stderr. */
+
+const UPSCALE_ROOT = (() => {
+  const candidates = [
+    path.join(__dirname, 'code_source_upscale'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'code_source_upscale') : null,
+  ].filter(Boolean);
+  for (const c of candidates) {
+    if (fssync.existsSync(path.join(c, 'bin', 'upscayl-bin.exe'))) return c;
+  }
+  return null;
+})();
+
+/* Modèles disponibles : paires .param/.bin présentes dans models/ —
+   on peut en déposer d'autres (remacri, ultrasharp…), ils apparaîtront. */
+async function listUpscaleModels() {
+  if (!UPSCALE_ROOT) return null;
+  try {
+    const files = await fs.readdir(path.join(UPSCALE_ROOT, 'models'));
+    return files
+      .filter((f) => f.endsWith('.param'))
+      .map((f) => f.slice(0, -'.param'.length))
+      .filter((n) => files.includes(`${n}.bin`));
+  } catch {
+    return null;
+  }
+}
+
+ipcMain.handle('upscale-models', () => listUpscaleModels());
+
+const upscaleJobs = new Map(); // webContents.id -> child process en cours
+const upscaleCancelFlags = new Set(); // annulations reçues avant le lancement du moteur
+
+/* Lance le moteur ; si `wc` est fourni, le process est suivi pour
+   l'annulation et tué si la fenêtre disparaît. */
+function runUpscaleEngine(wc, { inPath, outPath, model, scale, gpu, onText }) {
+  return new Promise((resolve) => {
+    const args = [
+      '-i', inPath,
+      '-o', outPath,
+      '-m', path.join(UPSCALE_ROOT, 'models'),
+      '-n', model,
+      '-s', String(scale),
+    ];
+    if (gpu != null) args.push('-g', String(gpu));
+    const child = spawn(path.join(UPSCALE_ROOT, 'bin', 'upscayl-bin.exe'), args, {
+      windowsHide: true,
+    });
+    const onGone = () => {
+      try {
+        child.kill();
+      } catch {
+        // process déjà terminé
+      }
+    };
+    if (wc) {
+      upscaleJobs.set(wc.id, child);
+      wc.once('destroyed', onGone);
+    }
+    let errText = '';
+    child.stdout.on('data', (chunk) => onText && onText(chunk.toString()));
+    child.stderr.on('data', (chunk) => {
+      const s = chunk.toString();
+      errText += s;
+      if (onText) onText(s);
+    });
+    child.on('error', (err) =>
+      resolve({ code: -1, killed: false, errText: `${errText}\n${err.message}` })
+    );
+    child.on('close', (code, signal) => {
+      if (wc) {
+        upscaleJobs.delete(wc.id);
+        if (!wc.isDestroyed()) wc.removeListener('destroyed', onGone);
+      }
+      resolve({ code, killed: Boolean(signal) || child.killed, errText });
+    });
+  });
+}
+
+/* Le rendu NCNN/Vulkan est corrompu sur certaines cartes (constaté sur
+   RTX série 50) : l'image ressort en bruit saturé. Contrôle : la sortie
+   upscalée, redescendue à la taille d'origine, doit rester proche de la
+   source — le bruit fait exploser l'écart moyen. */
+const UPSCALE_CAL_W = 360;
+const UPSCALE_CAL_H = 300;
+
+function upscaleCalBitmap() {
+  // dégradé structuré (proche d'une vraie image, sans hautes fréquences
+  // que l'upscale altérerait légitimement). Alpha à 254 : le PNG garde
+  // ainsi son canal alpha (RGBA) — c'est précisément ce chemin de rendu
+  // qui est corrompu sur les GPU touchés, un PNG opaque passerait le test.
+  const buf = Buffer.alloc(UPSCALE_CAL_W * UPSCALE_CAL_H * 4);
+  let i = 0;
+  for (let y = 0; y < UPSCALE_CAL_H; y += 1) {
+    for (let x = 0; x < UPSCALE_CAL_W; x += 1) {
+      buf[i] = Math.round((x / UPSCALE_CAL_W) * 255); // B
+      buf[i + 1] = Math.round((y / UPSCALE_CAL_H) * 255); // G
+      buf[i + 2] = Math.round(((x + y) / (UPSCALE_CAL_W + UPSCALE_CAL_H)) * 255); // R
+      buf[i + 3] = 254; // A
+      i += 4;
+    }
+  }
+  return buf;
+}
+
+function upscaleOutputSane(outPath, refBitmap) {
+  try {
+    const img = nativeImage.createFromPath(outPath);
+    if (img.isEmpty()) return false;
+    const small = img.resize({ width: UPSCALE_CAL_W, height: UPSCALE_CAL_H });
+    const bmp = small.toBitmap();
+    if (bmp.length !== refBitmap.length) return false;
+    let sum = 0;
+    let n = 0;
+    for (let j = 0; j < bmp.length; j += 4) {
+      sum +=
+        Math.abs(bmp[j] - refBitmap[j]) +
+        Math.abs(bmp[j + 1] - refBitmap[j + 1]) +
+        Math.abs(bmp[j + 2] - refBitmap[j + 2]);
+      n += 3;
+    }
+    return sum / n < 20;
+  } catch {
+    return false;
+  }
+}
+
+/* Choisit le premier GPU dont la sortie est saine (image de contrôle
+   upscalée ×2 puis vérifiée). Choix mémorisé dans userData. */
+async function pickUpscaleGpu() {
+  const cachePath = path.join(app.getPath('userData'), 'upscale-gpu.json');
+  try {
+    const saved = JSON.parse(await fs.readFile(cachePath, 'utf8'));
+    if (Number.isInteger(saved.gpu)) return saved.gpu;
+  } catch {
+    // pas encore calibré
+  }
+  const models = (await listUpscaleModels()) || [];
+  const model = models.includes('upscayl-lite-4x') ? 'upscayl-lite-4x' : models[0];
+  if (!model) return null;
+
+  const tag = crypto.randomBytes(4).toString('hex');
+  const tmpDir = app.getPath('temp');
+  const inPath = path.join(tmpDir, `istudio-upscale-cal-${tag}.png`);
+  const refBitmap = upscaleCalBitmap();
+  await fs.writeFile(
+    inPath,
+    nativeImage
+      .createFromBitmap(refBitmap, { width: UPSCALE_CAL_W, height: UPSCALE_CAL_H })
+      .toPNG()
+  );
+
+  let chosen = null;
+  try {
+    const tried = new Set();
+    const queue = [0];
+    while (queue.length) {
+      const gpu = queue.shift();
+      if (tried.has(gpu)) continue;
+      tried.add(gpu);
+      const outPath = path.join(tmpDir, `istudio-upscale-cal-${tag}-${gpu}.png`);
+      const r = await runUpscaleEngine(null, { inPath, outPath, model, scale: 2, gpu });
+      // le moteur liste les GPU à chaque lancement : « [1 AMD Radeon…] »
+      for (const m of r.errText.matchAll(/^\[(\d+) /gm)) {
+        const id = Number(m[1]);
+        if (!tried.has(id) && !queue.includes(id)) queue.push(id);
+      }
+      queue.sort((a, b) => a - b);
+      const ok = r.code === 0 && !r.killed && upscaleOutputSane(outPath, refBitmap);
+      fs.unlink(outPath).catch(() => {});
+      if (ok) {
+        chosen = gpu;
+        break;
+      }
+    }
+  } finally {
+    fs.unlink(inPath).catch(() => {});
+  }
+  if (chosen !== null) {
+    fs.writeFile(cachePath, JSON.stringify({ gpu: chosen })).catch(() => {});
+  }
+  return chosen;
+}
+
+let upscaleGpuPromise = null;
+function upscaleGpu() {
+  if (!upscaleGpuPromise) upscaleGpuPromise = pickUpscaleGpu().catch(() => null);
+  return upscaleGpuPromise;
+}
+
+ipcMain.handle('upscale-run', async (e, { sourcePath, data, ext, scale, model }) => {
+  if (!UPSCALE_ROOT) {
+    return { error: 'Moteur d’upscale introuvable (dossier code_source_upscale manquant).' };
+  }
+  const wc = e.sender;
+  if (upscaleJobs.has(wc.id)) return { error: 'Un agrandissement est déjà en cours.' };
+  upscaleCancelFlags.delete(wc.id);
+
+  // premier lancement : calibration du GPU (voir upscaleOutputSane)
+  const gpu = await upscaleGpu();
+  if (gpu === null) {
+    upscaleGpuPromise = null; // re-tester au prochain essai
+    return {
+      error:
+        'Aucun processeur graphique compatible Vulkan n’a produit un résultat fiable sur cette machine.',
+    };
+  }
+  if (upscaleCancelFlags.delete(wc.id)) return { cancelled: true };
+
+  const tag = crypto.randomBytes(6).toString('hex');
+  const tmpDir = app.getPath('temp');
+  const outPath = path.join(tmpDir, `istudio-upscale-${tag}.png`);
+  const cleanup = [outPath];
+  try {
+    // Entrée : le fichier lui-même si le moteur sait le lire (jpg/png/webp),
+    // sinon les pixels décodés par la visionneuse, déposés en temporaire.
+    let inPath = sourcePath;
+    if (!inPath) {
+      inPath = path.join(tmpDir, `istudio-upscale-src-${tag}.${ext || 'png'}`);
+      await fs.writeFile(inPath, Buffer.from(data));
+      cleanup.push(inPath);
+    }
+
+    // progression tuile par tuile : « 25,00% »
+    const onText = (s) => {
+      const matches = s.match(/(\d+(?:[.,]\d+)?)%/g);
+      if (matches && !wc.isDestroyed()) {
+        const pct = parseFloat(matches[matches.length - 1].replace(',', '.'));
+        if (!Number.isNaN(pct)) wc.send('upscale-progress', pct);
+      }
+    };
+    const r = await runUpscaleEngine(wc, { inPath, outPath, model, scale, gpu, onText });
+    if (r.killed) return { cancelled: true };
+    if (r.code !== 0) {
+      const lines = r.errText
+        .trim()
+        .split(/\r?\n/)
+        .filter((l) => l && !l.includes('%') && !l.startsWith('['));
+      return { error: lines.slice(-3).join(' ') || `échec du moteur (code ${r.code})` };
+    }
+    return { data: await fs.readFile(outPath) };
+  } catch (err) {
+    return { error: err.message };
+  } finally {
+    upscaleJobs.delete(wc.id);
+    for (const p of cleanup) fs.unlink(p).catch(() => {});
+  }
+});
+
+ipcMain.handle('upscale-cancel', (e) => {
+  const child = upscaleJobs.get(e.sender.id);
+  if (child) {
+    try {
+      child.kill();
+    } catch {
+      // déjà terminé
+    }
+    return true;
+  }
+  // moteur pas encore lancé (calibration en cours) : on note l'annulation
+  upscaleCancelFlags.add(e.sender.id);
+  return true;
+});
+
+ipcMain.handle('print-file', async (e, fileUrl) => {
   const printWin = new BrowserWindow({
     show: false,
-    parent: mainWindow,
+    parent: senderWindow(e),
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
   try {

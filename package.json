@@ -26,6 +26,16 @@
       "preload.js",
       "renderer/**"
     ],
+    "extraResources": [
+      {
+        "from": "code_source_upscale",
+        "to": "code_source_upscale",
+        "filter": [
+          "bin/**",
+          "models/**"
+        ]
+      }
+    ],
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico"
