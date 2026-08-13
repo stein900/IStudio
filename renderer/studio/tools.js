@@ -34,9 +34,9 @@ window.StudioTools = (() => {
     id: 'move',
     key: 'v',
     icon: 'pointer',
-    label: 'Déplacement (V) — sélectionner, déplacer, redimensionner, pivoter',
+    label: 'Déplacement (V) — sélectionner, déplacer, redimensionner, pivoter, déformer',
     cursor: 'default',
-    hint: 'Cliquer : sélectionner · glisser : déplacer · poignées : redimensionner, le côté opposé reste fixe (Maj = libre, Alt = depuis le centre) · poignée du haut : pivoter (Maj = 15°)',
+    hint: 'Cliquer : sélectionner · glisser : déplacer · poignées : redimensionner (Maj = libre, Alt = depuis le centre, Ctrl = déformer / incliner) · poignée du haut : pivoter (Maj = 15°)',
     drag: null,
     transforming: false,
     onDown(ed, p) {
@@ -58,7 +58,7 @@ window.StudioTools = (() => {
     },
     onMove(ed, p, e) {
       if (this.transforming) {
-        ed.updateTransform(p, e.shiftKey, e.altKey);
+        ed.updateTransform(p, e.shiftKey, e.altKey, e.ctrlKey);
         return;
       }
       if (!this.drag) {
@@ -340,6 +340,38 @@ window.StudioTools = (() => {
     },
   });
 
+  /* ---------- Correcteur de tons directs ---------- */
+
+  register({
+    id: 'heal',
+    key: 'j',
+    icon: 'bandage',
+    label: 'Correcteur de tons directs (J) — effacer une imperfection',
+    cursor: 'crosshair',
+    hint: 'Peindre sur le défaut : au relâcher, la zone est reconstruite depuis son voisinage · clic droit : réglages de la brosse',
+    stroke: null,
+    last: null,
+    onDown(ed, p) {
+      const l = ed.requireRaster();
+      if (!l) return;
+      this.stroke = ed.beginHealStroke(l);
+      ed.healStampSegment(this.stroke, p, p);
+      this.last = p;
+    },
+    onMove(ed, p) {
+      if (!this.stroke) return;
+      ed.healStampSegment(this.stroke, this.last, p);
+      this.last = p;
+    },
+    onUp(ed) {
+      if (this.stroke) ed.endHealStroke(this.stroke);
+      this.stroke = null;
+    },
+    options(ed) {
+      return ed.buildBrushOptions('heal');
+    },
+  });
+
   /* ---------- Gomme (même moteur de brosse) ---------- */
 
   register({
@@ -502,6 +534,35 @@ window.StudioTools = (() => {
     onUp() {},
     options(ed) {
       return ed.buildTextOptions();
+    },
+  });
+
+  /* ---------- Repères de mesure (règle, compas, cercle) ---------- */
+
+  register({
+    id: 'guides',
+    key: 'k',
+    icon: 'compass',
+    label: 'Repères de mesure (K) — règle, compas, cercle (hors rendu)',
+    cursor: 'default',
+    hint: 'Ajoutez une règle, un compas ou un cercle via la barre d’options · glissez leurs poignées pour mesurer · ces repères ne font jamais partie de l’image',
+    dragging: false,
+    onDown(ed, p) {
+      this.dragging = ed.guideDown(p);
+    },
+    onMove(ed, p) {
+      if (this.dragging) {
+        ed.guideMove(p);
+        return;
+      }
+      ed.setCursor(ed.guideHitAt(p) ? 'pointer' : 'default');
+    },
+    onUp(ed) {
+      if (this.dragging) ed.guideUp();
+      this.dragging = false;
+    },
+    options(ed) {
+      return ed.buildGuideOptions();
     },
   });
 

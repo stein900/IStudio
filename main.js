@@ -68,6 +68,38 @@ function senderWindow(e) {
   return BrowserWindow.fromWebContents(e.sender);
 }
 
+/* ---------- i18n des dialogues natifs ----------
+   Même principe gettext que le renderer : la phrase française est la clé,
+   les catalogues JSON de renderer/i18n/locales sont partagés. Le renderer
+   pousse la langue via « set-locale ». */
+let dialogDict = {};
+
+function tr(fr, params) {
+  let out = Object.prototype.hasOwnProperty.call(dialogDict, fr) ? dialogDict[fr] : fr;
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      out = out.split(`{${key}}`).join(String(value));
+    }
+  }
+  return out;
+}
+
+ipcMain.handle('set-locale', (_e, code) => {
+  const safe = String(code || 'fr').slice(0, 8);
+  if (safe === 'fr') {
+    dialogDict = {};
+    return true;
+  }
+  try {
+    dialogDict = JSON.parse(
+      fssync.readFileSync(path.join(__dirname, 'renderer', 'i18n', 'locales', `${safe}.json`), 'utf8')
+    );
+  } catch {
+    dialogDict = {};
+  }
+  return true;
+});
+
 function fileFromArgv(argv) {
   for (const arg of argv.slice(1)) {
     if (typeof arg !== 'string' || arg.startsWith('-')) continue;
@@ -1072,14 +1104,14 @@ ipcMain.handle('reload-context', async (_e, filePath) => buildContext(filePath))
 
 ipcMain.handle('pick-file', async (e) => {
   const result = await dialog.showOpenDialog(senderWindow(e), {
-    title: 'Ouvrir une image',
+    title: tr('Ouvrir une image'),
     properties: ['openFile'],
     filters: [
       {
-        name: 'Images',
+        name: tr('Images'),
         extensions: [...IMAGE_EXTS].map((e) => e.slice(1)),
       },
-      { name: 'Tous les fichiers', extensions: ['*'] },
+      { name: tr('Tous les fichiers'), extensions: ['*'] },
     ],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
@@ -1124,12 +1156,12 @@ ipcMain.handle('read-file', async (_e, filePath) => {
 ipcMain.handle('delete-file', async (e, filePath) => {
   const { response } = await dialog.showMessageBox(senderWindow(e), {
     type: 'warning',
-    buttons: ['Supprimer', 'Annuler'],
+    buttons: [tr('Supprimer'), tr('Annuler')],
     defaultId: 0,
     cancelId: 1,
-    title: 'Supprimer l’image',
-    message: `Envoyer « ${path.basename(filePath)} » à la corbeille ?`,
-    detail: 'L’image pourra être restaurée depuis la corbeille Windows.',
+    title: tr('Supprimer l’image'),
+    message: tr('Envoyer « {name} » à la corbeille ?', { name: path.basename(filePath) }),
+    detail: tr('L’image pourra être restaurée depuis la corbeille Windows.'),
   });
   if (response !== 0) return false;
   try {
@@ -1180,14 +1212,15 @@ ipcMain.handle('ask-save-mode', async (e, fileName) => {
   if (SMOKE) return process.argv.includes('--smoke-save-copy') ? 'copy' : 'overwrite';
   const { response } = await dialog.showMessageBox(senderWindow(e), {
     type: 'question',
-    buttons: ['Écraser l’original', 'Enregistrer une copie', 'Annuler'],
+    buttons: [tr('Écraser l’original'), tr('Enregistrer une copie'), tr('Annuler')],
     defaultId: 0,
     cancelId: 2,
     noLink: true,
-    title: 'Enregistrer',
-    message: `Enregistrer « ${fileName} »`,
-    detail:
-      'Écraser remplace le fichier d’origine. La copie est créée à côté, l’original reste intact.',
+    title: tr('Enregistrer'),
+    message: tr('Enregistrer « {name} »', { name: fileName }),
+    detail: tr(
+      'Écraser remplace le fichier d’origine. La copie est créée à côté, l’original reste intact.'
+    ),
   });
   if (response === 0) return 'overwrite';
   if (response === 1) return 'copy';
@@ -1365,9 +1398,9 @@ ipcMain.handle('save-project', async (e, { suggestedName, json }) => {
     filePath = path.join(app.getPath('temp'), suggestedName);
   } else {
     const r = await dialog.showSaveDialog(senderWindow(e), {
-      title: 'Enregistrer le projet',
+      title: tr('Enregistrer le projet'),
       defaultPath: suggestedName,
-      filters: [{ name: 'Projet IStudio', extensions: ['istudio'] }],
+      filters: [{ name: tr('Projet IStudio'), extensions: ['istudio'] }],
     });
     if (r.canceled || !r.filePath) return null;
     filePath = r.filePath;
@@ -1388,8 +1421,8 @@ ipcMain.handle('open-project', async (e) => {
     if (!filePath) return null;
   } else {
     const r = await dialog.showOpenDialog(senderWindow(e), {
-      title: 'Ouvrir un projet',
-      filters: [{ name: 'Projet IStudio', extensions: ['istudio'] }],
+      title: tr('Ouvrir un projet'),
+      filters: [{ name: tr('Projet IStudio'), extensions: ['istudio'] }],
       properties: ['openFile'],
     });
     if (r.canceled || !r.filePaths.length) return null;
@@ -1417,14 +1450,14 @@ ipcMain.handle('export-image', async (e, { suggestedName, data }) => {
     }
   }
   const { canceled, filePath } = await dialog.showSaveDialog(senderWindow(e), {
-    title: 'Exporter l’image',
+    title: tr('Exporter l’image'),
     defaultPath: suggestedName,
     filters: [
-      { name: 'Image PNG', extensions: ['png'] },
-      { name: 'Image JPEG', extensions: ['jpg', 'jpeg'] },
-      { name: 'Image WebP', extensions: ['webp'] },
-      { name: 'Document Photoshop', extensions: ['psd'] },
-      { name: 'Tous les fichiers', extensions: ['*'] },
+      { name: tr('Image PNG'), extensions: ['png'] },
+      { name: tr('Image JPEG'), extensions: ['jpg', 'jpeg'] },
+      { name: tr('Image WebP'), extensions: ['webp'] },
+      { name: tr('Document Photoshop'), extensions: ['psd'] },
+      { name: tr('Tous les fichiers'), extensions: ['*'] },
     ],
   });
   if (canceled || !filePath) return null;
@@ -1727,11 +1760,11 @@ ipcMain.handle('upscale-cancel', (e) => {
    exportSvg du preload) pour débrancher le module. */
 ipcMain.handle('export-svg', async (e, { suggestedName, data }) => {
   const { canceled, filePath } = await dialog.showSaveDialog(senderWindow(e), {
-    title: 'Exporter en SVG',
+    title: tr('Exporter en SVG'),
     defaultPath: suggestedName,
     filters: [
-      { name: 'Image vectorielle SVG', extensions: ['svg'] },
-      { name: 'Tous les fichiers', extensions: ['*'] },
+      { name: tr('Image vectorielle SVG'), extensions: ['svg'] },
+      { name: tr('Tous les fichiers'), extensions: ['*'] },
     ],
   });
   if (canceled || !filePath) return null;

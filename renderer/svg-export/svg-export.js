@@ -14,6 +14,9 @@
  */
 
 window.SvgExport = (() => {
+  // i18n : cle = phrase francaise (repli automatique)
+  const t = (str, params) => (window.I18n ? window.I18n.t(str, params) : str);
+
   const WORKER_URL = 'svg-export/svg-export-worker.js';
   const COLOR_STOPS = [8, 16, 24, 32, 48, 64, 96, 128];
   const DEFAULT_COLORS = 32;
@@ -79,7 +82,7 @@ window.SvgExport = (() => {
         <div id="svgx-header">
           <div id="svgx-title-wrap">
             ${svgIcon(ICON_SPLINE, 20)}
-            <h2 id="svgx-title">Convertir en SVG</h2>
+            <h2 id="svgx-title" data-i18n>Convertir en SVG</h2>
           </div>
           <button id="svgx-close" class="icon-btn" title="Fermer (Échap)">
             ${svgIcon('<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />')}
@@ -93,25 +96,25 @@ window.SvgExport = (() => {
             <span id="svgx-progress-pct">0 %</span>
           </div>
           <div class="svgx-buttons">
-            <button id="svgx-abort" class="btn-labeled">Annuler</button>
+            <button id="svgx-abort" class="btn-labeled" data-i18n>Annuler</button>
           </div>
         </div>
 
         <div id="svgx-result" hidden>
           <div id="svgx-controls">
             <div class="svgx-row">
-              <span class="svgx-label">Mode</span>
+              <span class="svgx-label" data-i18n>Mode</span>
               <div id="svgx-modes">
-                <button class="svgx-mode" data-mode="lossless">Sans perte</button>
-                <button class="svgx-mode" data-mode="simplified">Simplifié</button>
+                <button class="svgx-mode" data-mode="lossless" data-i18n>Sans perte</button>
+                <button class="svgx-mode" data-mode="simplified" data-i18n>Simplifié</button>
               </div>
             </div>
             <div class="svgx-row" id="svgx-colors-row" hidden>
-              <span class="svgx-label">Couleurs</span>
+              <span class="svgx-label" data-i18n>Couleurs</span>
               <input id="svgx-colors" type="range" min="0" max="${COLOR_STOPS.length - 1}" step="1" />
               <span id="svgx-colors-val"></span>
             </div>
-            <p id="svgx-notice" hidden>Cette image est trop détaillée pour une vectorisation
+            <p id="svgx-notice" hidden data-i18n>Cette image est trop détaillée pour une vectorisation
               sans perte : le mode simplifié a été appliqué. Ajustez le nombre de couleurs
               ci-dessus selon le rendu voulu.</p>
           </div>
@@ -119,16 +122,16 @@ window.SvgExport = (() => {
           <dl id="svgx-stats"></dl>
           <p class="svgx-note" id="svgx-note"></p>
           <div class="svgx-buttons">
-            <button id="svgx-cancel" class="btn-labeled">Annuler</button>
-            <button id="svgx-save" class="btn-labeled np-primary">Exporter en SVG…</button>
+            <button id="svgx-cancel" class="btn-labeled" data-i18n>Annuler</button>
+            <button id="svgx-save" class="btn-labeled np-primary" data-i18n>Exporter en SVG…</button>
           </div>
         </div>
 
         <div id="svgx-error" hidden>
           <p id="svgx-error-text"></p>
           <div class="svgx-buttons">
-            <button id="svgx-error-close" class="btn-labeled">Fermer</button>
-            <button id="svgx-error-retry" class="btn-labeled np-primary" hidden>Réessayer avec moins de couleurs</button>
+            <button id="svgx-error-close" class="btn-labeled" data-i18n>Fermer</button>
+            <button id="svgx-error-retry" class="btn-labeled np-primary" hidden data-i18n>Réessayer avec moins de couleurs</button>
           </div>
         </div>
       </div>`;
@@ -171,7 +174,7 @@ window.SvgExport = (() => {
       });
     }
     els.colors.addEventListener('input', () => {
-      els.colorsVal.textContent = `${COLOR_STOPS[els.colors.value]} couleurs`;
+      els.colorsVal.textContent = t('{n} couleurs', { n: COLOR_STOPS[els.colors.value] });
     });
     els.colors.addEventListener('change', () => {
       colorCount = COLOR_STOPS[els.colors.value];
@@ -250,7 +253,7 @@ window.SvgExport = (() => {
     const decoded = await host.decodeFile(file);
     if (!isOpen()) return;
     if (!decoded) {
-      fail('Impossible de décoder cette image.');
+      fail(t('Impossible de décoder cette image.'));
       return;
     }
     const { img, url } = decoded;
@@ -270,8 +273,8 @@ window.SvgExport = (() => {
     els.progressPct.textContent = '0 %';
     els.progressLabel.textContent =
       mode === 'lossless'
-        ? 'Vectorisation sans perte en cours…'
-        : `Simplification (${colorCount} couleurs) et vectorisation…`;
+        ? t('Vectorisation sans perte en cours…')
+        : t('Simplification ({n} couleurs) et vectorisation…', { n: colorCount });
     setPhase('progress');
   }
 
@@ -282,7 +285,7 @@ window.SvgExport = (() => {
     worker = new Worker(WORKER_URL);
     worker.onmessage = (event) => onWorkerMessage(event.data);
     worker.onerror = () => {
-      if (isOpen()) fail('La vectorisation a échoué.');
+      if (isOpen()) fail(t('La vectorisation a échoué.'));
     };
     // copie des pixels : la source reste disponible pour les réglages suivants
     const pixels = source.data.slice().buffer;
@@ -324,7 +327,7 @@ window.SvgExport = (() => {
   function onWorkerError(msg) {
     stopWorker();
     if (msg.code !== 'limit') {
-      fail(`Vectorisation impossible : ${msg.message}`);
+      fail(t('Vectorisation impossible : {msg}', { msg: msg.message }));
       return;
     }
     if (mode === 'lossless') {
@@ -335,8 +338,8 @@ window.SvgExport = (() => {
       return;
     }
     fail(
-      `Vectorisation impossible : ${msg.message} ` +
-        'Réduisez le nombre de couleurs pour obtenir un fichier exploitable.',
+      t('Vectorisation impossible : {msg}', { msg: msg.message }) +
+        ' ' + t('Réduisez le nombre de couleurs pour obtenir un fichier exploitable.'),
       colorCount > COLOR_STOPS[0]
     );
   }
@@ -348,23 +351,21 @@ window.SvgExport = (() => {
       btn.classList.toggle('is-selected', btn.dataset.mode === mode);
       const blocked = btn.dataset.mode === 'lossless' && losslessBlocked;
       btn.disabled = blocked;
-      btn.title = blocked ? 'Impossible pour cette image : trop détaillée' : '';
+      btn.title = blocked ? t('Impossible pour cette image : trop détaillée') : '';
     }
     els.colorsRow.hidden = mode !== 'simplified';
     els.colors.value = String(Math.max(0, COLOR_STOPS.indexOf(colorCount)));
-    els.colorsVal.textContent = `${colorCount} couleurs`;
+    els.colorsVal.textContent = t('{n} couleurs', { n: colorCount });
     els.notice.hidden = !(losslessBlocked && mode === 'simplified');
     els.note.textContent =
       mode === 'lossless'
-        ? 'Rendu identique au pixel près : chaque zone de couleur est devenue un tracé ' +
-          'vectoriel, transparence comprise. Le fichier reste net à n’importe quel zoom.'
-        : 'Image réduite à quelques couleurs puis vectorisée : le SVG est exactement ' +
-          'fidèle à l’aperçu ci-dessus, et reste net à n’importe quel zoom.';
+        ? t('Rendu identique au pixel près : chaque zone de couleur est devenue un tracé vectoriel, transparence comprise. Le fichier reste net à n’importe quel zoom.')
+        : t('Image réduite à quelques couleurs puis vectorisée : le SVG est exactement fidèle à l’aperçu ci-dessus, et reste net à n’importe quel zoom.');
   }
 
   function renderStats(stats) {
     els.stats.innerHTML = '';
-    statRow('Mode', mode === 'lossless' ? 'Sans perte' : `Simplifié — ${colorCount} couleurs`);
+    statRow('Mode', mode === 'lossless' ? t('Sans perte') : t('Simplifié — {n} couleurs', { n: colorCount }));
     statRow('Dimensions', `${source.width} × ${source.height} px`);
     statRow('Couleurs', stats.colors.toLocaleString('fr-FR'));
     statRow('Tracés', stats.rects.toLocaleString('fr-FR'));
@@ -373,14 +374,14 @@ window.SvgExport = (() => {
 
   function statRow(label, value) {
     const dt = document.createElement('dt');
-    dt.textContent = label;
+    dt.textContent = t(label);
     const dd = document.createElement('dd');
     dd.textContent = value;
     els.stats.append(dt, dd);
   }
 
   function formatBytes(n) {
-    const units = ['octets', 'Ko', 'Mo'];
+    const units = [t('octets'), t('Ko'), t('Mo')];
     let v = n;
     let i = 0;
     while (v >= 1024 && i < units.length - 1) {
