@@ -131,12 +131,12 @@ window.Studio = (() => {
       </footer>
       <div id="studio-brush-popup" hidden>
         <div class="sbp-top">
-          <canvas id="sbp-preview" width="72" height="72"></canvas>
+          <canvas id="sbp-preview" width="84" height="84"></canvas>
           <div class="sbp-sliders">
-            <div class="sbp-row"><span class="sbp-lab">Taille :</span><input id="sbp-size" type="range" min="1" max="300" /><span id="sbp-size-val" class="sbp-val"></span></div>
-            <div class="sbp-row"><span class="sbp-lab">Dureté :</span><input id="sbp-hardness" type="range" min="0" max="100" /><span id="sbp-hardness-val" class="sbp-val"></span></div>
-            <div class="sbp-row"><span class="sbp-lab">Rondeur :</span><input id="sbp-roundness" type="range" min="10" max="100" /><span id="sbp-roundness-val" class="sbp-val"></span></div>
-            <div class="sbp-row"><span class="sbp-lab">Angle :</span><input id="sbp-angle" type="range" min="0" max="180" /><span id="sbp-angle-val" class="sbp-val"></span></div>
+            <div class="sbp-row"><span class="sbp-lab">Taille</span><input id="sbp-size" type="range" min="0" max="1000" /><input id="sbp-size-num" class="sbp-num" type="number" min="1" max="1000" step="1" /><span class="sbp-unit">px</span></div>
+            <div class="sbp-row"><span class="sbp-lab">Dureté</span><input id="sbp-hardness" type="range" min="0" max="100" /><input id="sbp-hardness-num" class="sbp-num" type="number" min="0" max="100" step="1" /><span class="sbp-unit">%</span></div>
+            <div class="sbp-row"><span class="sbp-lab">Rondeur</span><input id="sbp-roundness" type="range" min="10" max="100" /><input id="sbp-roundness-num" class="sbp-num" type="number" min="10" max="100" step="1" /><span class="sbp-unit">%</span></div>
+            <div class="sbp-row"><span class="sbp-lab">Angle</span><input id="sbp-angle" type="range" min="0" max="180" /><input id="sbp-angle-num" class="sbp-num" type="number" min="0" max="180" step="1" /><span class="sbp-unit">°</span></div>
           </div>
         </div>
         <div class="sbp-presets-head">Default</div>
@@ -185,13 +185,13 @@ window.Studio = (() => {
       brushPopup: root.querySelector('#studio-brush-popup'),
       sbpPreview: root.querySelector('#sbp-preview'),
       sbpSize: root.querySelector('#sbp-size'),
-      sbpSizeVal: root.querySelector('#sbp-size-val'),
+      sbpSizeNum: root.querySelector('#sbp-size-num'),
       sbpHardness: root.querySelector('#sbp-hardness'),
-      sbpHardnessVal: root.querySelector('#sbp-hardness-val'),
+      sbpHardnessNum: root.querySelector('#sbp-hardness-num'),
       sbpRoundness: root.querySelector('#sbp-roundness'),
-      sbpRoundnessVal: root.querySelector('#sbp-roundness-val'),
+      sbpRoundnessNum: root.querySelector('#sbp-roundness-num'),
       sbpAngle: root.querySelector('#sbp-angle'),
-      sbpAngleVal: root.querySelector('#sbp-angle-val'),
+      sbpAngleNum: root.querySelector('#sbp-angle-num'),
       sbpPresets: root.querySelector('#sbp-presets'),
       blend: root.querySelector('#studio-blend'),
       menuPopup: root.querySelector('#studio-menu-popup'),
@@ -1626,7 +1626,7 @@ window.Studio = (() => {
         const drawCurve = () => {
           const c2 = cv.getContext('2d');
           c2.clearRect(0, 0, CW, CH);
-          c2.fillStyle = '#131318';
+          c2.fillStyle = '#262626';
           c2.fillRect(0, 0, CW, CH);
           c2.strokeStyle = 'rgba(255, 255, 255, 0.07)';
           c2.lineWidth = 1;
@@ -1653,7 +1653,7 @@ window.Studio = (() => {
           for (const p of pts) {
             const pc = toC(p);
             c2.fillStyle = '#fff';
-            c2.strokeStyle = '#131318';
+            c2.strokeStyle = '#262626';
             c2.beginPath();
             c2.rect(pc.x - 3.5, pc.y - 3.5, 7, 7);
             c2.fill();
@@ -2994,6 +2994,20 @@ window.Studio = (() => {
 
   let brushPopupTool = null;
 
+  /* Le curseur de taille est logarithmique : autant de course pour 1→10 px
+     que pour 100→1000 px — précis pour les petites pointes, ample pour les
+     grandes. Le champ numérique permet de toute façon la valeur exacte. */
+  const BRUSH_SIZE_MAX = 1000;
+  const SIZE_SLIDER_STEPS = 1000;
+
+  function sizeFromSlider(pos) {
+    return Math.round(Math.exp((pos / SIZE_SLIDER_STEPS) * Math.log(BRUSH_SIZE_MAX)));
+  }
+
+  function sizeToSlider(size) {
+    return Math.round((Math.log(Math.max(1, size)) / Math.log(BRUSH_SIZE_MAX)) * SIZE_SLIDER_STEPS);
+  }
+
   function popupBrush() {
     return S && brushPopupTool ? S.brushes[brushPopupTool] : null;
   }
@@ -3001,15 +3015,15 @@ window.Studio = (() => {
   function syncBrushPopupUI() {
     const b = popupBrush();
     if (!b) return;
-    els.sbpSize.value = String(b.size);
-    els.sbpSizeVal.textContent = `${b.size} px`;
+    els.sbpSize.value = String(sizeToSlider(b.size));
+    els.sbpSizeNum.value = String(b.size);
     els.sbpHardness.value = String(b.hardness);
-    els.sbpHardnessVal.textContent = `${b.hardness} %`;
+    els.sbpHardnessNum.value = String(b.hardness);
     els.sbpRoundness.value = String(b.roundness);
-    els.sbpRoundnessVal.textContent = `${b.roundness} %`;
+    els.sbpRoundnessNum.value = String(b.roundness);
     els.sbpAngle.value = String(b.angle);
-    els.sbpAngleVal.textContent = `${b.angle} °`;
-    renderTipPreview(els.sbpPreview, b, 56);
+    els.sbpAngleNum.value = String(b.angle);
+    renderTipPreview(els.sbpPreview, b, 68);
   }
 
   function openBrushPopup(toolId, x, y) {
@@ -3029,21 +3043,41 @@ window.Studio = (() => {
   }
 
   function initBrushPopup() {
-    const bindSlider = (input, valEl, prop, unit) => {
-      input.addEventListener('input', () => {
-        const b = popupBrush();
-        if (!b) return;
-        b[prop] = Number(input.value);
-        valEl.textContent = `${input.value} ${unit}`;
-        renderTipPreview(els.sbpPreview, b, 56);
-        updateOptionsBar(); // les curseurs de la barre d'options suivent
-        drawHud(); // le cercle d'impact suit les réglages
+    const apply = (prop, value) => {
+      const b = popupBrush();
+      if (!b) return;
+      b[prop] = value;
+      renderTipPreview(els.sbpPreview, b, 68);
+      updateOptionsBar(); // les curseurs de la barre d'options suivent
+      drawHud(); // le cercle d'impact suit les réglages
+    };
+    /* Chaque rangée : un curseur et un champ numérique synchronisés —
+       le champ donne la valeur exacte, le curseur la course rapide. */
+    const bindRow = ({ slider, num, prop, min, max, toValue, toSlider }) => {
+      slider.addEventListener('input', () => {
+        const v = toValue ? toValue(Number(slider.value)) : Number(slider.value);
+        num.value = String(v);
+        apply(prop, v);
+      });
+      num.addEventListener('change', () => {
+        const v = Math.round(Math.min(max, Math.max(min, Number(num.value) || min)));
+        num.value = String(v);
+        slider.value = String(toSlider ? toSlider(v) : v);
+        apply(prop, v);
       });
     };
-    bindSlider(els.sbpSize, els.sbpSizeVal, 'size', 'px');
-    bindSlider(els.sbpHardness, els.sbpHardnessVal, 'hardness', '%');
-    bindSlider(els.sbpRoundness, els.sbpRoundnessVal, 'roundness', '%');
-    bindSlider(els.sbpAngle, els.sbpAngleVal, 'angle', '°');
+    bindRow({
+      slider: els.sbpSize,
+      num: els.sbpSizeNum,
+      prop: 'size',
+      min: 1,
+      max: BRUSH_SIZE_MAX,
+      toValue: sizeFromSlider,
+      toSlider: sizeToSlider,
+    });
+    bindRow({ slider: els.sbpHardness, num: els.sbpHardnessNum, prop: 'hardness', min: 0, max: 100 });
+    bindRow({ slider: els.sbpRoundness, num: els.sbpRoundnessNum, prop: 'roundness', min: 10, max: 100 });
+    bindRow({ slider: els.sbpAngle, num: els.sbpAngleNum, prop: 'angle', min: 0, max: 180 });
 
     for (const preset of BRUSH_PRESETS) {
       const tile = document.createElement('button');
@@ -3109,7 +3143,8 @@ window.Studio = (() => {
       buildSlider({
         label: 'Taille',
         min: 1,
-        max: 300,
+        max: BRUSH_SIZE_MAX,
+        scale: 'log',
         value: brush.size,
         unit: 'px',
         onInput: (v) => {
@@ -3239,23 +3274,30 @@ window.Studio = (() => {
     updateOptionsBar();
   }
 
-  function buildSlider({ label, min, max, value, unit, onInput }) {
+  /* scale: 'log' — curseur logarithmique (précision sur les petites valeurs,
+     course ample sur les grandes) ; min doit alors être >= 1. */
+  function buildSlider({ label, min, max, value, unit, onInput, scale }) {
     const box = document.createElement('div');
     box.className = 'studio-opt-group';
     const lab = document.createElement('span');
     lab.className = 'studio-opt-label';
     lab.textContent = label;
+    const log = scale === 'log';
+    const toPos = (v) =>
+      log ? Math.round((Math.log(Math.max(min, v) / min) / Math.log(max / min)) * 1000) : v;
+    const fromPos = (p) => (log ? Math.round(min * Math.pow(max / min, p / 1000)) : p);
     const input = document.createElement('input');
     input.type = 'range';
-    input.min = String(min);
-    input.max = String(max);
-    input.value = String(value);
+    input.min = log ? '0' : String(min);
+    input.max = log ? '1000' : String(max);
+    input.value = String(toPos(value));
     const val = document.createElement('span');
     val.className = 'studio-opt-value';
     val.textContent = `${value} ${unit}`;
     input.addEventListener('input', () => {
-      onInput(Number(input.value));
-      val.textContent = `${input.value} ${unit}`;
+      const v = fromPos(Number(input.value));
+      onInput(v);
+      val.textContent = `${v} ${unit}`;
     });
     box.append(lab, input, val);
     return box;
@@ -3826,7 +3868,7 @@ window.Studio = (() => {
       const brush = S.brushes[S.tool];
       if (brush) {
         const step = brush.size < 12 ? 1 : brush.size < 60 ? 4 : 10;
-        brush.size = Math.min(300, Math.max(1, brush.size + (key === ']' ? step : -step)));
+        brush.size = Math.min(BRUSH_SIZE_MAX, Math.max(1, brush.size + (key === ']' ? step : -step)));
         updateOptionsBar();
         if (brushPopupTool === S.tool) syncBrushPopupUI();
         drawHud();

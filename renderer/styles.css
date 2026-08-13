@@ -35,6 +35,10 @@
   --thumb-ph-a: #1b1b21;
   --thumb-ph-b: #22222a;
   --state-icon: #3c3c46;
+  --slider-track: rgba(255, 255, 255, 0.14);
+  --slider-thumb: #c9cad2;
+  --slider-thumb-hover: #e8e9ef;
+  --slider-thumb-border: rgba(0, 0, 0, 0.55);
 }
 
 /* ---------- Thème clair ---------- */
@@ -70,6 +74,10 @@ body.light {
   --thumb-ph-a: #e3e5eb;
   --thumb-ph-b: #eff1f5;
   --state-icon: #c3c6d2;
+  --slider-track: rgba(18, 22, 34, 0.2);
+  --slider-thumb: #555b6e;
+  --slider-thumb-hover: #333849;
+  --slider-thumb-border: rgba(255, 255, 255, 0.55);
 }
 
 /* Le passage d'un thème à l'autre est adouci sur les grandes surfaces. */
@@ -87,38 +95,92 @@ body.light .theme-icon-moon {
   display: none;
 }
 
-/* Studio garde son interface sombre (comme les éditeurs pro) : ses
-   surfaces mêlent variables et couleurs fixes — on redéfinit donc les
-   variables localement pour rester cohérent quel que soit le thème. */
+/* Studio garde son interface sombre quel que soit le thème (comme les
+   éditeurs pro), avec une palette gris neutre type Photoshop/Photopea :
+   panneaux gris moyens, séparations sombres, zone de travail anthracite.
+   Les variables sont redéfinies localement sur #studio pour que tout le
+   module (menus, modales, popups) suive. */
+#studio,
 body.light #studio {
   color-scheme: dark;
-  --bg: #0e0e11;
-  --bg-panel: #16161a;
-  --bg-panel-top: #1a1a1f;
-  --bg-input: #26262d;
-  --bg-hover: rgba(255, 255, 255, 0.06);
-  --bg-active: rgba(255, 255, 255, 0.1);
-  --btn-bg: rgba(255, 255, 255, 0.03);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --border-faint: rgba(255, 255, 255, 0.04);
-  --text: #ececf1;
-  --text-dim: #9a9aa6;
-  --text-faint: #6e6e7a;
+  --bg: #282828; /* zone de travail autour du document */
+  --bg-panel: #333333; /* panneaux (outils, calques, barres) */
+  --bg-panel-top: #3a3a3a; /* haut des dégradés de barres */
+  --bg-input: #262626;
+  --bg-menu: #3c3c3c; /* surfaces élevées : menus, modales, popups */
+  --bg-hover: rgba(255, 255, 255, 0.07);
+  --bg-active: rgba(255, 255, 255, 0.12);
+  --btn-bg: rgba(255, 255, 255, 0.045);
+  --border: rgba(0, 0, 0, 0.32); /* séparations sombres, à la Photoshop */
+  --border-strong: rgba(0, 0, 0, 0.5);
+  --border-faint: rgba(0, 0, 0, 0.2);
+  --text: #e2e2e2;
+  --text-dim: #a3a3a3;
+  --text-faint: #7c7c7c;
   --accent: #6ea8ff;
   --accent-soft: rgba(110, 168, 255, 0.14);
   --accent-border: rgba(110, 168, 255, 0.5);
   --accent-hover: rgba(110, 168, 255, 0.24);
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-pop: 0 22px 70px rgba(0, 0, 0, 0.6);
-  --stage-center: #131318;
-  --glass: rgba(22, 22, 27, 0.85);
-  --backdrop: rgba(8, 8, 10, 0.55);
-  --scrollbar: rgba(255, 255, 255, 0.15);
+  --stage-center: #2d2d2d;
+  --glass: rgba(50, 50, 50, 0.92);
+  --backdrop: rgba(10, 10, 10, 0.55);
+  --scrollbar: rgba(255, 255, 255, 0.18);
+  --slider-track: rgba(255, 255, 255, 0.16);
+  --slider-thumb: #c9c9c9;
+  --slider-thumb-hover: #e9e9e9;
+  --slider-thumb-border: rgba(0, 0, 0, 0.55);
 }
 
 [hidden] {
   display: none !important;
+}
+
+/* ---------- Curseurs (style studio, angulaire) ----------
+   Poignée rectangulaire type fader de console et piste fine à angles
+   droits, pour toute l'application — au lieu du rendu web arrondi. */
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 0;
+  background: var(--slider-track);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 7px;
+  height: 15px;
+  margin-top: -6px; /* centre la poignée sur la piste de 3 px */
+  border-radius: 1px;
+  background: var(--slider-thumb);
+  border: 1px solid var(--slider-thumb-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: background 0.12s ease;
+}
+
+input[type='range']:hover::-webkit-slider-thumb {
+  background: var(--slider-thumb-hover);
+}
+
+input[type='range']:active::-webkit-slider-thumb,
+input[type='range']:focus-visible::-webkit-slider-thumb {
+  background: var(--accent);
+  border-color: var(--slider-thumb-border);
+}
+
+input[type='range']:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 html,

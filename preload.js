@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('viewer', {
   onUpscaleProgress: (callback) => {
     ipcRenderer.on('upscale-progress', (_event, pct) => callback(pct));
   },
+  exportSvg: (payload) => ipcRenderer.invoke('export-svg', payload), // Module Export SVG
   onFullscreenChanged: (callback) => {
     ipcRenderer.on('fullscreen-changed', (_event, isFullscreen) => callback(isFullscreen));
   },
