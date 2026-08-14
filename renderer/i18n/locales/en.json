@@ -166,6 +166,8 @@
  "Informations sur l'image (I)": "Image information (I)",
  "Lecture / pause (Espace)": "Play / pause (Space)",
  "Lire en boucle (L)": "Loop playback (L)",
+ "Vidéo précédente (PgPréc)": "Previous video (PgUp)",
+ "Vidéo suivante (PgSuiv)": "Next video (PgDn)",
  "Modifier la vidéo dans VStudio (montage)": "Edit the video in VStudio (video editor)",
  "Ordre des miniatures": "Thumbnail order",
  "OCR : rendre le texte de l'image sélectionnable et copiable": "OCR: make the image text selectable and copyable",
