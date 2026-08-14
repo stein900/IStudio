@@ -3257,9 +3257,14 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   // Lecteur vidéo : Espace lecture/pause, ←/→ ±5 s (Maj : ±10 s), ↑/↓
-  // volume, Début reprend du départ, L boucle, M muet. La navigation entre
-  // fichiers passe alors par PgPréc/PgSuiv (ou les flèches de la barre).
+  // volume (jusqu'à 200 %), +/− vitesse de lecture, Début reprend du
+  // départ, L boucle, M muet. La navigation entre fichiers passe alors
+  // par PgPréc/PgSuiv (ou les flèches de la barre).
   if (videoActive && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key === 'Escape' && !videoRateMenu.hidden) {
+      videoRateMenuShow(false);
+      return;
+    }
     switch (e.key) {
       case ' ':
         e.preventDefault();
@@ -3277,6 +3282,15 @@ window.addEventListener('keydown', (e) => {
       case 'ArrowDown':
         e.preventDefault();
         videoNudgeVolume(e.key === 'ArrowUp' ? 0.05 : -0.05);
+        return;
+      case '+':
+      case '=':
+        e.preventDefault();
+        videoStepRate(1);
+        return;
+      case '-':
+        e.preventDefault();
+        videoStepRate(-1);
         return;
       case 'Home':
         e.preventDefault();
@@ -3417,6 +3431,9 @@ const videoPlayBtn = document.getElementById('video-play');
 const videoLoopBtn = document.getElementById('video-loop');
 const videoMuteBtn = document.getElementById('video-mute');
 const videoVolume = document.getElementById('video-volume');
+const videoVolumeLabel = document.getElementById('video-volume-label');
+const videoRateBtn = document.getElementById('video-rate');
+const videoRateMenu = document.getElementById('video-rate-menu');
 
 const VIDEO_EXT_SET = new Set(['mp4', 'm4v', 'mkv', 'mov', 'webm']);
 
@@ -3445,6 +3462,11 @@ function formatTime(s) {
 
 let videoActive = false;
 let videoLoop = true; // toujours active par défaut — bascule le temps de la session
+
+const VIDEO_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+let videoRate = 1; // vitesse de lecture — conservée le temps de la session
+let videoVol = 1; // volume effectif 0..2 ; au-delà de 1 : amplification Web Audio
+let videoGain = null; // GainNode, créé au premier dépassement de 100 %
 
 function videoSetProgress(p) {
   videoSeek.style.setProperty('--p', String(Math.min(1, Math.max(0, p))));
@@ -3511,7 +3533,7 @@ function videoProximityAt(x, y) {
 
 function videoUpdateProximity(x, y) {
   if (!videoActive) return;
-  if (videoEl.paused || videoEl.ended || videoSeekDrag) {
+  if (videoEl.paused || videoEl.ended || videoSeekDrag || !videoRateMenu.hidden) {
     videoApplyBarOpacity(1);
     return;
   }
@@ -3536,6 +3558,7 @@ function showVideo(file) {
   videoEl.hidden = false;
   videoUi.hidden = false;
   videoEl.loop = videoLoop;
+  videoEl.playbackRate = videoRate;
   if (videoEl.src !== file.url) {
     holdThumbs(); // priorité réseau/décodage à la vidéo principale
     videoSetProgress(0);
@@ -3559,6 +3582,7 @@ function hideVideo() {
   videoEl.load(); // libère le décodeur et referme le fichier
   videoEl.hidden = true;
   videoUi.hidden = true;
+  videoRateMenu.hidden = true;
   videoUi.classList.remove('is-playing');
   videoApplyBarOpacity(1); // prête pour la prochaine ouverture
   hideResBadge();
@@ -3607,16 +3631,68 @@ function videoToggleMute() {
   localStorage.setItem('videoMuted', String(videoEl.muted));
 }
 
+/* La balise <video> plafonne son volume à 100 % : au-delà, le signal est
+   amplifié par un GainNode Web Audio (jusqu'à ×2, comme VLC). Le graphe
+   n'est créé qu'au premier dépassement — en dessous, le chemin audio natif
+   suffit et rien ne change. Une fois branché, il reste en place (une
+   MediaElementSource est définitive) avec un gain neutre de 1. */
+function videoEnsureBoost() {
+  if (videoGain) return;
+  const ctx = new AudioContext();
+  const src = ctx.createMediaElementSource(videoEl);
+  videoGain = ctx.createGain();
+  src.connect(videoGain);
+  videoGain.connect(ctx.destination);
+}
+
+function videoApplyVolume(v) {
+  videoVol = Math.min(2, Math.max(0, v));
+  if (videoVol > 1) videoEnsureBoost();
+  videoEl.volume = Math.min(1, videoVol);
+  if (videoGain) {
+    if (videoGain.context.state === 'suspended') videoGain.context.resume();
+    videoGain.gain.value = Math.max(1, videoVol);
+  }
+  localStorage.setItem('videoVolume', String(videoVol));
+  videoSyncVolumeUi();
+}
+
 function videoNudgeVolume(delta) {
-  videoEl.volume = Math.min(1, Math.max(0, videoEl.volume + delta));
-  if (videoEl.volume > 0) videoEl.muted = false;
-  localStorage.setItem('videoVolume', String(videoEl.volume));
+  videoApplyVolume(videoVol + delta);
+  if (videoVol > 0) videoEl.muted = false;
   localStorage.setItem('videoMuted', String(videoEl.muted));
 }
 
 function videoSyncVolumeUi() {
-  videoUi.classList.toggle('is-muted', videoEl.muted || videoEl.volume === 0);
-  videoVolume.value = String(Math.round(videoEl.volume * 100));
+  videoUi.classList.toggle('is-muted', videoEl.muted || videoVol === 0);
+  videoUi.classList.toggle('is-boosted', !videoEl.muted && videoVol > 1);
+  const pct = Math.round(videoVol * 100);
+  videoVolume.value = String(pct);
+  videoVolumeLabel.textContent = `${pct} %`;
+}
+
+/* --- Vitesse de lecture --- */
+
+function videoSetRate(r) {
+  videoRate = r;
+  videoEl.playbackRate = r;
+  videoEl.defaultPlaybackRate = r; // survit au changement de src (vidéo suivante)
+  videoRateBtn.textContent = `${r}×`;
+  videoRateBtn.classList.toggle('active', r !== 1);
+  for (const b of videoRateMenu.children) {
+    b.classList.toggle('active', Number(b.dataset.rate) === r);
+  }
+}
+
+function videoStepRate(dir) {
+  const i = VIDEO_RATES.indexOf(videoRate);
+  const j = Math.min(VIDEO_RATES.length - 1, Math.max(0, (i < 0 ? VIDEO_RATES.indexOf(1) : i) + dir));
+  videoSetRate(VIDEO_RATES[j]);
+}
+
+function videoRateMenuShow(on) {
+  videoRateMenu.hidden = !on;
+  if (!on && videoLastMouse) videoUpdateProximity(videoLastMouse.x, videoLastMouse.y);
 }
 
 /* Passe le relais à VStudio (éditeur vidéo) : le process main lance
@@ -3684,7 +3760,9 @@ stage.addEventListener('mousemove', (e) => {
 stage.addEventListener('mouseleave', () => {
   if (!videoActive) return;
   videoLastMouse = null;
-  if (!videoEl.paused && !videoEl.ended && !videoSeekDrag) videoApplyBarOpacity(0);
+  if (!videoEl.paused && !videoEl.ended && !videoSeekDrag && videoRateMenu.hidden) {
+    videoApplyBarOpacity(0);
+  }
 });
 
 /* --- Barre de progression : clic et glisser pour se déplacer --- */
@@ -3735,17 +3813,44 @@ videoLoopBtn.addEventListener('click', () => videoSetLoop(!videoLoop));
 videoMuteBtn.addEventListener('click', videoToggleMute);
 
 videoVolume.addEventListener('input', () => {
-  videoEl.volume = Number(videoVolume.value) / 100;
-  if (videoEl.volume > 0) videoEl.muted = false;
-  localStorage.setItem('videoVolume', String(videoEl.volume));
+  videoApplyVolume(Number(videoVolume.value) / 100);
+  if (videoVol > 0) videoEl.muted = false;
   localStorage.setItem('videoMuted', String(videoEl.muted));
 });
 
-// volume et sourdine mémorisés d'une session à l'autre (défaut : 100 %)
+// Vitesse de lecture : le bouton ouvre un menu de choix ; clic ailleurs le
+// referme. Les choix sont générés ici depuis VIDEO_RATES.
+for (const r of VIDEO_RATES) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.dataset.rate = String(r);
+  b.textContent = `${r}×`;
+  if (r === 1) b.classList.add('active');
+  b.addEventListener('click', () => {
+    videoSetRate(r);
+    videoRateMenuShow(false);
+  });
+  videoRateMenu.appendChild(b);
+}
+
+videoRateBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  videoRateMenuShow(videoRateMenu.hidden);
+});
+
+document.addEventListener('click', (e) => {
+  if (!videoRateMenu.hidden && !videoRateMenu.contains(e.target)) videoRateMenuShow(false);
+});
+
+// volume et sourdine mémorisés d'une session à l'autre (défaut : 100 %,
+// amplification jusqu'à 200 % restaurée elle aussi)
 {
   const rawVol = localStorage.getItem('videoVolume');
   const storedVol = rawVol === null ? 1 : Number(rawVol);
-  videoEl.volume = Number.isFinite(storedVol) ? Math.min(1, Math.max(0, storedVol)) : 1;
+  videoVol = Number.isFinite(storedVol) ? Math.min(2, Math.max(0, storedVol)) : 1;
+  if (videoVol > 1) videoEnsureBoost();
+  videoEl.volume = Math.min(1, videoVol);
+  if (videoGain) videoGain.gain.value = Math.max(1, videoVol);
   videoEl.muted = localStorage.getItem('videoMuted') === 'true';
   videoSyncVolumeUi();
   videoSetLoop(videoLoop); // boucle active par défaut : bouton allumé dès l'ouverture
