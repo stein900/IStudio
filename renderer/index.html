@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: blob:; style-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: blob:; media-src 'self' file: blob:; style-src 'self'" />
   <title>IStudio</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="paint.css" />
@@ -239,7 +239,7 @@
               <path d="m21 15-5-5L5 21" />
             </svg>
             <span class="home-card-title" data-i18n>Ouvrir une image</span>
-            <span class="home-card-sub" data-i18n>Parcourir vos fichiers — jpg, png, psd…</span>
+            <span class="home-card-sub" data-i18n>Parcourir vos fichiers — jpg, png, psd, mp4…</span>
           </button>
           <button id="home-studio" class="home-card">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -320,13 +320,99 @@
     </div>
     <div id="image-backdrop" aria-hidden="true" hidden></div>
     <img id="image" alt="" draggable="false" decoding="async" hidden />
+
+    <!-- Lecteur vidéo : la vidéo occupe la scène (ratio préservé) ; la barre
+         de contrôles flotte en bas, son opacité suit la proximité de la
+         souris pendant la lecture (dégradé circulaire, instantané). -->
+    <video id="video" hidden></video>
+    <div id="video-ui" hidden>
+      <div id="video-seek-row">
+        <span id="video-time-current">0:00</span>
+        <div id="video-seek" title="Se déplacer dans la vidéo">
+          <div id="video-seek-track">
+            <div id="video-seek-buffer"></div>
+            <div id="video-seek-fill"></div>
+            <div id="video-seek-handle"></div>
+          </div>
+        </div>
+        <span id="video-time-total">0:00</span>
+      </div>
+      <div id="video-controls">
+        <button id="video-restart" class="vbtn" title="Revenir au début (Début)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="6" y1="5" x2="6" y2="19" />
+            <polygon points="19 5.5 10.5 12 19 18.5" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+        <button id="video-back10" class="vbtn vbtn-skip" title="Reculer de 10 secondes (Maj+←)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 9-9c-2.52 0-4.93 1-6.74 2.74L3 8" />
+            <polyline points="3 3 3 8 8 8" />
+            <text x="12" y="15.4" text-anchor="middle" font-size="8" font-weight="600" fill="currentColor" stroke="none">10</text>
+          </svg>
+        </button>
+        <button id="video-back5" class="vbtn vbtn-skip" title="Reculer de 5 secondes (←)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 9-9c-2.52 0-4.93 1-6.74 2.74L3 8" />
+            <polyline points="3 3 3 8 8 8" />
+            <text x="12" y="15.4" text-anchor="middle" font-size="8" font-weight="600" fill="currentColor" stroke="none">5</text>
+          </svg>
+        </button>
+        <button id="video-play" class="vbtn vbtn-play" title="Lecture / pause (Espace)">
+          <svg class="vp-icon-play" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+            <path d="M8 5.6v12.8a1 1 0 0 0 1.54.84l9.9-6.4a1 1 0 0 0 0-1.68l-9.9-6.4A1 1 0 0 0 8 5.6z" />
+          </svg>
+          <svg class="vp-icon-pause" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+            <rect x="6.6" y="5" width="3.6" height="14" rx="1.3" />
+            <rect x="13.8" y="5" width="3.6" height="14" rx="1.3" />
+          </svg>
+        </button>
+        <button id="video-fwd5" class="vbtn vbtn-skip" title="Avancer de 5 secondes (→)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+            <polyline points="21 3 21 8 16 8" />
+            <text x="12" y="15.4" text-anchor="middle" font-size="8" font-weight="600" fill="currentColor" stroke="none">5</text>
+          </svg>
+        </button>
+        <button id="video-fwd10" class="vbtn vbtn-skip" title="Avancer de 10 secondes (Maj+→)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+            <polyline points="21 3 21 8 16 8" />
+            <text x="12" y="15.4" text-anchor="middle" font-size="8" font-weight="600" fill="currentColor" stroke="none">10</text>
+          </svg>
+        </button>
+        <span class="video-ctrl-sep" aria-hidden="true"></span>
+        <button id="video-loop" class="vbtn" title="Lire en boucle (L)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m17 2 4 4-4 4" />
+            <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
+            <path d="m7 22-4-4 4-4" />
+            <path d="M21 13v1a4 4 0 0 1-4 4H3" />
+          </svg>
+        </button>
+        <button id="video-mute" class="vbtn" title="Couper le son (M)">
+          <svg class="vp-icon-vol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polygon points="11 5 6 9 3 9 3 15 6 15 11 19 11 5" />
+            <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+            <path d="M18.6 5.4a9.5 9.5 0 0 1 0 13.2" />
+          </svg>
+          <svg class="vp-icon-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polygon points="11 5 6 9 3 9 3 15 6 15 11 19 11 5" />
+            <line x1="15.5" y1="9.5" x2="20.5" y2="14.5" />
+            <line x1="20.5" y1="9.5" x2="15.5" y2="14.5" />
+          </svg>
+        </button>
+        <input id="video-volume" type="range" min="0" max="100" value="100" title="Volume" />
+      </div>
+    </div>
+
     <div id="error-state" hidden>
       <svg class="state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="m10.29 3.86-8.2 14.14A1.86 1.86 0 0 0 3.7 21h16.6a1.86 1.86 0 0 0 1.61-2.99L13.71 3.86a1.86 1.86 0 0 0-3.42 0z" />
         <line x1="12" y1="9" x2="12" y2="13" />
         <line x1="12" y1="16.8" x2="12.01" y2="16.8" />
       </svg>
-      <p data-i18n>Impossible d'afficher cette image</p>
+      <p id="error-text" data-i18n>Impossible d'afficher cette image</p>
       <p id="error-name" class="empty-hint"></p>
     </div>
 

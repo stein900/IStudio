@@ -70,6 +70,18 @@
         "name": "Document Photoshop",
         "description": "Document Photoshop (calques)",
         "role": "Editor"
+      },
+      {
+        "ext": [
+          "mp4",
+          "m4v",
+          "mkv",
+          "mov",
+          "webm"
+        ],
+        "name": "Vidéo",
+        "description": "Fichier vidéo",
+        "role": "Viewer"
       }
     ]
   },
