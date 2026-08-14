@@ -389,6 +389,119 @@ function createWindow(contextPromise = null) {
           }
           app.quit();
         }, 1500);
+      } else if (process.argv.includes('--smoke-ocr')) {
+        // OCR : activation du bouton → couche de texte sélectionnable posée
+        // sur l'image, Ctrl+A/copie logique, désactivation propre.
+        setTimeout(async () => {
+          try {
+            const r = await mainWindow.webContents.executeJavaScript(
+              `(async () => {
+                 await new Promise((res) => setTimeout(res, 1000));
+                 const img = document.getElementById('image');
+                 const imageShown = !img.hidden && img.naturalWidth > 0;
+                 const btn = document.getElementById('btn-ocr');
+                 btn.click();
+                 // l'analyse est asynchrone (PowerShell) : on attend le résultat
+                 for (let i = 0; i < 100; i += 1) {
+                   const layer = document.getElementById('ocr-layer');
+                   if (layer && !layer.hidden) break;
+                   await new Promise((res) => setTimeout(res, 200));
+                 }
+                 const layer = document.getElementById('ocr-layer');
+                 const activated = Boolean(layer) && !layer.hidden && btn.classList.contains('active');
+                 const words = layer ? [...layer.querySelectorAll('.ocr-word')] : [];
+                 const sample = words.slice(0, 4).map((w) => w.textContent).join(' ');
+                 // sélection complète : le texte copié doit contenir les mots
+                 const sel = window.getSelection();
+                 const range = document.createRange();
+                 if (layer) { range.selectNodeContents(layer); sel.removeAllRanges(); sel.addRange(range); }
+                 const selectedText = sel.toString().trim();
+                 return { imageShown, activated, wordCount: words.length, sample, selectedText };
+               })()`
+            );
+            // capture avec la sélection visible, pour contrôle visuel
+            const shot = await mainWindow.webContents.capturePage();
+            const shotPath = path.join(app.getPath('temp'), 'istudio-smoke-ocr.png');
+            fssync.writeFileSync(shotPath, shot.toPNG());
+            const r2 = await mainWindow.webContents.executeJavaScript(
+              `(async () => {
+                 document.getElementById('btn-ocr').click(); // bascule off
+                 await new Promise((res) => setTimeout(res, 200));
+                 const layer = document.getElementById('ocr-layer');
+                 const btn = document.getElementById('btn-ocr');
+                 return { deactivated: layer.hidden && !btn.classList.contains('active') };
+               })()`
+            );
+            console.log(`SMOKE OCR: ${JSON.stringify({ ...r, ...r2, shotPath })}`);
+          } catch (err) {
+            console.log(`SMOKE OCR ERROR: ${err.message}`);
+          }
+          app.quit();
+        }, 1500);
+      } else if (process.argv.includes('--smoke-strip')) {
+        // Tri du bandeau : nom (ordre Explorateur) par défaut, bascule par
+        // date puis inversion, retour au nom = ordre initial.
+        setTimeout(async () => {
+          try {
+            const r = await mainWindow.webContents.executeJavaScript(
+              `(async () => {
+                 await new Promise((res) => setTimeout(res, 800));
+                 // le bandeau doit être visible pour ce test ; les préférences
+                 // de l'utilisateur sont restaurées à la fin
+                 const prevStrip = localStorage.getItem('filmstripVisible');
+                 const prevSort = localStorage.getItem('stripSort');
+                 const prevAsc = localStorage.getItem('stripSortAsc');
+                 if (document.body.classList.contains('no-filmstrip')) {
+                   document.getElementById('btn-film').click();
+                 }
+                 const names = () =>
+                   [...document.querySelectorAll('#filmstrip .thumb .thumb-name')].map((n) => n.textContent);
+                 const rows = () => [...document.querySelectorAll('.strip-sort-opt')];
+                 const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+                 document.getElementById('strip-sort').click();
+                 const popupOpen = !document.getElementById('strip-sort-popup').hidden;
+                 rows()[0].click(); // Nom (ou inversion s'il était déjà actif)
+                 await wait(700);
+                 if (names()[0] !== 'alpha.png') { rows()[0].click(); await wait(400); }
+                 const byName = names();
+                 rows()[1].click(); // Date : sens naturel = récentes d'abord
+                 await wait(700);
+                 const byDateDesc = names();
+                 rows()[1].click(); // re-clic : ordre chronologique
+                 await wait(400);
+                 const byDateAsc = names();
+                 const currentName = document.getElementById('file-name').textContent;
+                 // l'image affichée doit être visible dans le bandeau
+                 const tileRect = document.querySelector('#filmstrip .thumb.current').getBoundingClientRect();
+                 const stripRect = document.getElementById('filmstrip').getBoundingClientRect();
+                 const currentVisible = tileRect.left >= stripRect.left - 1 && tileRect.right <= stripRect.right + 1;
+                 // garde-fou : fenêtre de 30 tuiles max, extensible par +30
+                 const tileCount = document.querySelectorAll('#filmstrip .thumb').length;
+                 const moreBtns = document.querySelectorAll('#filmstrip .thumb-more').length;
+                 const firstMore = document.querySelector('#filmstrip .thumb-more');
+                 if (firstMore) { firstMore.click(); await wait(250); }
+                 const tileCountAfterMore = document.querySelectorAll('#filmstrip .thumb').length;
+                 if (prevStrip === null) localStorage.removeItem('filmstripVisible');
+                 else localStorage.setItem('filmstripVisible', prevStrip);
+                 if (prevSort === null) localStorage.removeItem('stripSort');
+                 else localStorage.setItem('stripSort', prevSort);
+                 if (prevAsc === null) localStorage.removeItem('stripSortAsc');
+                 else localStorage.setItem('stripSortAsc', prevAsc);
+                 return { popupOpen, byName: byName.slice(0, 5), byDateDesc: byDateDesc.slice(0, 5),
+                          byDateAsc: byDateAsc.slice(0, 5), currentName, currentVisible,
+                          tileCount, moreBtns, tileCountAfterMore };
+               })()`
+            );
+            // le popup de tri est resté ouvert : contrôle visuel possible
+            const shot = await mainWindow.webContents.capturePage();
+            const shotPath = path.join(app.getPath('temp'), 'istudio-smoke-strip.png');
+            fssync.writeFileSync(shotPath, shot.toPNG());
+            console.log(`SMOKE STRIP: ${JSON.stringify({ ...r, shotPath })}`);
+          } catch (err) {
+            console.log(`SMOKE STRIP ERROR: ${err.message}`);
+          }
+          app.quit();
+        }, 1500);
       } else if (process.argv.includes('--smoke-psd')) {
         // PSD : composite affiché dans la visionneuse, calques séparés dans
         // Studio (ordre d'empilement respecté), export PSD disponible.
@@ -1150,6 +1263,104 @@ ipcMain.handle('read-file', async (_e, filePath) => {
     return await fs.readFile(filePath);
   } catch {
     return null;
+  }
+});
+
+/* ---------- OCR (moteur natif Windows) ----------
+   Reconnaissance de texte via Windows.Media.Ocr, le moteur intégré au
+   système : aucune dépendance, aucun modèle embarqué, aucun réseau. Un
+   script PowerShell éphémère (passé en -EncodedCommand, donc rien à
+   distribuer) lit un PNG temporaire envoyé par le renderer et écrit le
+   résultat (mots + boîtes englobantes) en JSON dans un second fichier
+   temporaire — ce qui évite tout problème d'encodage de la console. */
+
+const OCR_PS = `
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime
+  $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation.UniversalApiContract, ContentType = WindowsRuntime]
+  $null = [Windows.Storage.StorageFile, Windows.Foundation.UniversalApiContract, ContentType = WindowsRuntime]
+  $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Foundation.UniversalApiContract, ContentType = WindowsRuntime]
+  $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+    $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+    $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1'
+  })[0]
+  function Await($op, $resultType) {
+    $task = $asTaskGeneric.MakeGenericMethod($resultType).Invoke($null, @($op))
+    $null = $task.Wait(-1)
+    $task.Result
+  }
+  $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+  if (-not $engine) {
+    $langs = [Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages
+    if ($langs.Count -gt 0) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($langs[0]) }
+  }
+  if (-not $engine) {
+    [IO.File]::WriteAllText($env:ISTUDIO_OCR_OUT, '{"error":"nolang"}', [Text.UTF8Encoding]::new($false))
+    exit 0
+  }
+  $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($env:ISTUDIO_OCR_IN)) ([Windows.Storage.StorageFile])
+  $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+  $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+  $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+  $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+  $lines = @()
+  foreach ($line in $result.Lines) {
+    $words = @()
+    foreach ($w in $line.Words) {
+      $r = $w.BoundingRect
+      $words += [pscustomobject]@{
+        t = $w.Text
+        x = [Math]::Round($r.X, 1); y = [Math]::Round($r.Y, 1)
+        w = [Math]::Round($r.Width, 1); h = [Math]::Round($r.Height, 1)
+      }
+    }
+    $lines += [pscustomobject]@{ words = $words }
+  }
+  $json = [pscustomobject]@{ lang = $engine.RecognizerLanguage.LanguageTag; lines = $lines } | ConvertTo-Json -Depth 6 -Compress
+  [IO.File]::WriteAllText($env:ISTUDIO_OCR_OUT, $json, [Text.UTF8Encoding]::new($false))
+} catch {
+  [IO.File]::WriteAllText($env:ISTUDIO_OCR_OUT, '{"error":"fail"}', [Text.UTF8Encoding]::new($false))
+  exit 1
+}
+`;
+
+ipcMain.handle('ocr-run', async (_e, data) => {
+  if (process.platform !== 'win32') return { error: 'unsupported' };
+  const stamp = crypto.randomBytes(6).toString('hex');
+  const inPath = path.join(app.getPath('temp'), `istudio-ocr-${stamp}.png`);
+  const outPath = path.join(app.getPath('temp'), `istudio-ocr-${stamp}.json`);
+  try {
+    await fs.writeFile(inPath, Buffer.from(data));
+    await new Promise((resolve, reject) => {
+      const child = spawn(
+        'powershell.exe',
+        [
+          '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+          '-EncodedCommand', Buffer.from(OCR_PS, 'utf16le').toString('base64'),
+        ],
+        {
+          env: { ...process.env, ISTUDIO_OCR_IN: inPath, ISTUDIO_OCR_OUT: outPath },
+          windowsHide: true,
+          stdio: 'ignore',
+        }
+      );
+      const timer = setTimeout(() => child.kill(), 30000);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      child.on('close', () => {
+        clearTimeout(timer);
+        resolve(); // le verdict est dans le fichier de sortie, pas le code retour
+      });
+    });
+    return JSON.parse(await fs.readFile(outPath, 'utf8'));
+  } catch {
+    return { error: 'fail' };
+  } finally {
+    fs.unlink(inPath).catch(() => {});
+    fs.unlink(outPath).catch(() => {});
   }
 });
 

@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('viewer', {
   saveProject: (payload) => ipcRenderer.invoke('save-project', payload),
   openProject: () => ipcRenderer.invoke('open-project'),
   printFile: (fileUrl) => ipcRenderer.invoke('print-file', fileUrl),
+  ocrRun: (data) => ipcRenderer.invoke('ocr-run', data),
   upscaleModels: () => ipcRenderer.invoke('upscale-models'),
   upscaleRun: (payload) => ipcRenderer.invoke('upscale-run', payload),
   upscaleCancel: () => ipcRenderer.invoke('upscale-cancel'),

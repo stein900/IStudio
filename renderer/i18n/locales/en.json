@@ -157,6 +157,11 @@
  "Inclinaison (degrés)": "Skew (degrees)",
  "Informations": "Information",
  "Informations sur l'image (I)": "Image information (I)",
+ "Ordre des miniatures": "Thumbnail order",
+ "OCR : rendre le texte de l'image sélectionnable et copiable": "OCR: make the image text selectable and copyable",
+ "Aucun texte détecté": "No text detected",
+ "Aucune langue de reconnaissance de texte n’est installée dans Windows": "No text recognition language is installed in Windows",
+ "Reconnaissance de texte impossible sur cette image": "Text recognition failed on this image",
  "Intensité": "Strength",
  "Inverser les couleurs": "Invert colors",
  "JPEG": "JPEG",
@@ -347,5 +352,8 @@
  "Écraser l’original": "Overwrite the original",
  "Écraser remplace le fichier d’origine. La copie est créée à côté, l’original reste intact.": "Overwrite replaces the original file. The copy is created alongside it; the original stays intact.",
  "Épaisseur": "Thickness",
- "Étendue": "Spread"
+ "Étendue": "Spread",
+ "{n} images non affichées": "{n} images not shown",
+ "{n} précédentes": "{n} previous",
+ "{n} suivantes": "{n} next"
 }
