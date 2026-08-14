@@ -26,6 +26,7 @@ const btnCrop = document.getElementById('btn-crop');
 const btnUpscale = document.getElementById('btn-upscale');
 const btnPaint = document.getElementById('btn-paint');
 const btnStudio = document.getElementById('btn-studio');
+const btnOcr = document.getElementById('btn-ocr');
 const btnInfo = document.getElementById('btn-info');
 const btnPrint = document.getElementById('btn-print');
 const btnDelete = document.getElementById('btn-delete');
@@ -109,6 +110,7 @@ function fitScale() {
 function applyTransform() {
   image.style.transform =
     `translate(-50%, -50%) translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+  ocrSyncTransform(); // la couche de texte OCR suit l'image au pixel près
   updateBackdrop();
   zoomLabel.textContent = state.fit ? tr('Ajusté') : `${Math.round(state.zoom * 100)} %`;
   if (window.Pro && window.Pro.active()) window.Pro.onViewChanged();
@@ -230,7 +232,7 @@ function render() {
   btnNext.disabled = disable || state.files.length < 2;
   // .module-btn : boutons injectés par les modules optionnels (voir la
   // section « Modules optionnels » en fin de fichier) — même cycle de vie
-  for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnUpscale, btnPaint, btnStudio, btnInfo, btnPrint, btnDelete, btnGallery, ...document.querySelectorAll('#toolbar .module-btn')]) {
+  for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnUpscale, btnPaint, btnStudio, btnOcr, btnInfo, btnPrint, btnDelete, btnGallery, ...document.querySelectorAll('#toolbar .module-btn')]) {
     b.disabled = disable;
   }
 
@@ -248,6 +250,7 @@ function render() {
   }
 
   if (!hasFile) {
+    ocrDeactivate();
     counter.textContent = '–';
     zoomLabel.textContent = '';
     fileNameEl.textContent = 'IStudio';
@@ -360,11 +363,122 @@ function setFilmstripVisible(visible) {
   applyFilmstripVisibility();
 }
 
-/* Les miniatures sont chargées par pages de 50 pour ne pas décoder
-   des centaines d'images d'un coup dans les gros dossiers. */
-const THUMB_PAGE = 50;
-let thumbsLoaded = 0;
-let thumbMoreBtn = null;
+/* ---------- Ordre du bandeau (et de la navigation) ----------
+   Par défaut, le dossier est présenté par date de modification, les plus
+   récentes en premier — comme un dossier de photos trié par date dans
+   l'Explorateur. Le petit bouton à gauche du bandeau permet de passer au
+   tri par nom (ordre naturel de l'Explorateur : « img2 » avant « img10 »)
+   ou par taille ; re-clic sur le critère actif : ordre inversé. Le choix
+   est mémorisé et réappliqué aux prochains dossiers. Le tri réordonne
+   state.files : bandeau, flèches ←/→ et compteur restent toujours
+   cohérents entre eux. */
+
+const stripSortBtn = document.getElementById('strip-sort');
+const stripSortPopup = document.getElementById('strip-sort-popup');
+
+const STRIP_SORTS = [
+  { key: 'name', label: 'Nom' },
+  { key: 'mtime', label: 'Date de modification' },
+  { key: 'size', label: 'Taille' },
+];
+
+let stripSort = localStorage.getItem('stripSort') || 'mtime';
+if (!STRIP_SORTS.some((s) => s.key === stripSort)) stripSort = 'mtime';
+const storedStripAsc = localStorage.getItem('stripSortAsc');
+// sens naturel par critère (comme l'Explorateur) : nom A→Z, date/taille décroissantes
+let stripAsc = storedStripAsc === null ? stripSort === 'name' : storedStripAsc !== 'false';
+
+function stripCompare(a, b) {
+  if (stripSort === 'mtime') return (a.mtime || 0) - (b.mtime || 0);
+  if (stripSort === 'size') return (a.size || 0) - (b.size || 0);
+  return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+/* L'ordre « natif » (nom croissant) est celui dans lequel le process main
+   livre déjà le dossier : aucun réordonnancement nécessaire dans ce cas. */
+function stripSortIsNativeOrder() {
+  return stripSort === 'name' && stripAsc;
+}
+
+async function applyStripSort() {
+  updateStripSortUi();
+  const files = state.files;
+  if (!files.length) return;
+  if (stripSort !== 'name' && !files._statsLoaded) {
+    await ensureFileStats(); // dates/tailles à la demande (voir plus bas)
+    if (state.files !== files) return; // le dossier a changé entre-temps
+  }
+  const file = currentFile();
+  const sorted = files.slice().sort(stripCompare);
+  if (!stripAsc) sorted.reverse();
+  sorted._statsLoaded = files._statsLoaded; // les stats suivent le nouveau tableau
+  reorderContext(sorted, file ? sorted.indexOf(file) : 0);
+}
+
+function updateStripSortUi() {
+  const cur = STRIP_SORTS.find((s) => s.key === stripSort);
+  stripSortBtn.title = `${tr('Ordre des miniatures')} — ${tr(cur.label)} ${stripAsc ? '↑' : '↓'}`;
+  // signale un ordre différent du défaut (date, récentes en premier)
+  stripSortBtn.classList.toggle('is-sorted', stripSort !== 'mtime' || stripAsc);
+}
+
+function buildStripSortPopup() {
+  stripSortPopup.textContent = '';
+  for (const s of STRIP_SORTS) {
+    const row = document.createElement('button');
+    row.className = 'strip-sort-opt';
+    const active = s.key === stripSort;
+    row.classList.toggle('is-active', active);
+    const label = document.createElement('span');
+    label.textContent = tr(s.label);
+    row.appendChild(label);
+    const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    arrow.setAttribute('viewBox', '0 0 24 24');
+    arrow.innerHTML = '<path d="M12 5v14m-6-6 6 6 6-6" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />';
+    arrow.classList.add('strip-sort-arrow');
+    if (active && stripAsc) arrow.classList.add('asc');
+    if (!active) arrow.classList.add('hidden-arrow');
+    row.appendChild(arrow);
+    row.addEventListener('click', () => {
+      if (s.key === stripSort) {
+        stripAsc = !stripAsc; // re-clic sur le tri actif : inverse l'ordre
+      } else {
+        stripSort = s.key;
+        // sens naturel du critère : nom A→Z, date/taille décroissantes
+        stripAsc = s.key === 'name';
+      }
+      localStorage.setItem('stripSort', stripSort);
+      localStorage.setItem('stripSortAsc', String(stripAsc));
+      buildStripSortPopup();
+      applyStripSort();
+    });
+    stripSortPopup.appendChild(row);
+  }
+}
+
+stripSortBtn.addEventListener('click', () => {
+  if (stripSortPopup.hidden) buildStripSortPopup();
+  stripSortPopup.hidden = !stripSortPopup.hidden;
+});
+
+document.addEventListener('pointerdown', (e) => {
+  if (stripSortPopup.hidden) return;
+  if (!stripSortPopup.contains(e.target) && e.target !== stripSortBtn && !stripSortBtn.contains(e.target)) {
+    stripSortPopup.hidden = true;
+  }
+});
+
+/* Garde-fou : le bandeau ne montre qu'une FENÊTRE de 30 vignettes centrée
+   sur l'image affichée — jamais tout le dossier (ouvrir la 99 000ᵉ image
+   d'un dossier n'en crée que 30). Des boutons « +30 » aux deux extrémités
+   étendent la fenêtre à la demande ; une navigation qui sort de la fenêtre
+   la recentre en repartant de 30 : le DOM reste borné quoi qu'il arrive. */
+const THUMB_PAGE = 30;
+let stripStart = 0; // fenêtre affichée : [stripStart, stripEnd) dans state.files
+let stripEnd = 0;
+let thumbMorePrev = null; // bouton « +30 précédentes »
+let thumbMoreNext = null; // bouton « +30 suivantes »
 
 /* Vignettes économes : jamais l'image pleine résolution dans une tuile.
    1. cache de miniatures Windows (Explorateur) via nativeImage — instantané
@@ -587,40 +701,73 @@ function refreshThumbAt(index, file) {
   queueThumb(() => loadThumb(tile, file));
 }
 
-function appendThumbs(upTo) {
-  const total = state.files.length;
-  const end = Math.min(upTo, total);
+function stripMoreBtn(dir, remaining) {
+  const btn = document.createElement('button');
+  btn.className = 'thumb-more';
+  const n = Math.min(THUMB_PAGE, remaining);
+  btn.title = tr('{n} images non affichées', { n: remaining });
+  btn.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>';
+  const label = document.createElement('span');
+  label.textContent = dir < 0 ? tr('{n} précédentes', { n }) : tr('{n} suivantes', { n });
+  btn.appendChild(label);
+  btn.addEventListener('click', () => extendStrip(dir));
+  return btn;
+}
 
-  if (thumbMoreBtn) {
-    thumbMoreBtn.remove();
-    thumbMoreBtn = null;
+/* (Re)pose les boutons « +30 » aux extrémités selon ce qui reste caché. */
+function refreshStripEdges() {
+  if (thumbMorePrev) {
+    thumbMorePrev.remove();
+    thumbMorePrev = null;
   }
-
-  for (let i = thumbsLoaded; i < end; i += 1) {
-    filmstrip.appendChild(makeThumb(state.files[i], i));
+  if (thumbMoreNext) {
+    thumbMoreNext.remove();
+    thumbMoreNext = null;
   }
-  thumbsLoaded = end;
+  if (stripStart > 0) {
+    thumbMorePrev = stripMoreBtn(-1, stripStart);
+    filmstrip.prepend(thumbMorePrev);
+  }
+  const after = state.files.length - stripEnd;
+  if (after > 0) {
+    thumbMoreNext = stripMoreBtn(1, after);
+    filmstrip.appendChild(thumbMoreNext);
+  }
+}
 
-  const remaining = total - thumbsLoaded;
-  if (remaining > 0) {
-    thumbMoreBtn = document.createElement('button');
-    thumbMoreBtn.className = 'thumb-more';
-    thumbMoreBtn.title = `${remaining} image${remaining > 1 ? 's' : ''} non affichée${remaining > 1 ? 's' : ''}`;
-    thumbMoreBtn.innerHTML =
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
-      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>' +
-      `<span>${Math.min(THUMB_PAGE, remaining)} suivantes</span>`;
-    thumbMoreBtn.addEventListener('click', () => appendThumbs(thumbsLoaded + THUMB_PAGE));
-    filmstrip.appendChild(thumbMoreBtn);
+/* Étend la fenêtre de 30 tuiles vers la gauche ou la droite. */
+function extendStrip(dir) {
+  const frag = document.createDocumentFragment();
+  if (dir < 0) {
+    const newStart = Math.max(0, stripStart - THUMB_PAGE);
+    for (let i = newStart; i < stripStart; i += 1) {
+      frag.appendChild(makeThumb(state.files[i], i));
+    }
+    const prevWidth = filmstrip.scrollWidth;
+    filmstrip.insertBefore(frag, thumbMorePrev ? thumbMorePrev.nextSibling : filmstrip.firstChild);
+    stripStart = newStart;
+    refreshStripEdges();
+    // l'insertion à gauche ne doit pas faire sauter la vue
+    filmstrip.scrollLeft += filmstrip.scrollWidth - prevWidth;
+  } else {
+    const newEnd = Math.min(state.files.length, stripEnd + THUMB_PAGE);
+    for (let i = stripEnd; i < newEnd; i += 1) {
+      frag.appendChild(makeThumb(state.files[i], i));
+    }
+    filmstrip.insertBefore(frag, thumbMoreNext);
+    stripEnd = newEnd;
+    refreshStripEdges();
   }
   buildFilmstripDone();
 }
 
+/* Une navigation hors de la fenêtre la recentre (30 tuiles autour de la
+   nouvelle image — les tuiles lointaines sont libérées). */
 function ensureThumbLoaded(index) {
-  if (index >= thumbsLoaded) {
-    appendThumbs(Math.ceil((index + 1) / THUMB_PAGE) * THUMB_PAGE);
-  }
+  if (index < stripStart || index >= stripEnd) buildFilmstrip();
 }
 
 function buildFilmstripDone() {
@@ -629,30 +776,51 @@ function buildFilmstripDone() {
 
 function buildFilmstrip() {
   filmstrip.innerHTML = '';
-  thumbsLoaded = 0;
-  thumbMoreBtn = null;
+  thumbMorePrev = null;
+  thumbMoreNext = null;
   const hasFiles = state.files.length > 0;
   filmstrip.hidden = !hasFiles;
   stripToggle.hidden = !hasFiles;
-  if (!hasFiles) return;
+  stripSortBtn.hidden = !hasFiles;
+  if (!hasFiles) {
+    stripSortPopup.hidden = true;
+    return;
+  }
 
-  // Charge la première page, étendue si nécessaire jusqu'à l'image courante.
-  const needed = Math.max(THUMB_PAGE, state.index + 1);
-  appendThumbs(Math.ceil(needed / THUMB_PAGE) * THUMB_PAGE);
-  updateThumbSelection();
+  // Fenêtre de 30 tuiles centrée sur l'image courante (bornée aux bords).
+  const total = state.files.length;
+  stripStart = Math.max(0, Math.min(state.index - Math.floor(THUMB_PAGE / 2), total - THUMB_PAGE));
+  stripEnd = Math.min(total, stripStart + THUMB_PAGE);
+  for (let i = stripStart; i < stripEnd; i += 1) {
+    filmstrip.appendChild(makeThumb(state.files[i], i));
+  }
+  refreshStripEdges();
+  updateThumbSelection(false); // centrage immédiat, sans animation
   buildFilmstripDone();
 }
 
-function updateThumbSelection() {
+/* L'image affichée doit être visible dans le bandeau immédiatement — et le
+   rester : les tuiles adoptent leur vraie largeur au fil du chargement des
+   vignettes, ce qui décale la position ; on recentre donc à chaque vignette
+   chargée, tant que l'utilisateur n'a pas fait défiler le bandeau lui-même
+   (une navigation ré-arme le suivi). */
+let stripUserScrolled = false;
+
+function centerCurrentThumb(smooth) {
+  const tile = filmstrip.querySelector('.thumb.current');
+  if (tile) {
+    tile.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'nearest', inline: 'center' });
+  }
+}
+
+function updateThumbSelection(smooth = true) {
   ensureThumbLoaded(state.index);
   const thumbs = filmstrip.querySelectorAll('.thumb');
   thumbs.forEach((t) => {
-    const isCurrent = Number(t.dataset.index) === state.index;
-    t.classList.toggle('current', isCurrent);
-    if (isCurrent) {
-      t.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-    }
+    t.classList.toggle('current', Number(t.dataset.index) === state.index);
   });
+  stripUserScrolled = false;
+  centerCurrentThumb(smooth);
 }
 
 /* Molette sur le bandeau : défilement horizontal. */
@@ -661,9 +829,13 @@ filmstrip.addEventListener(
   (e) => {
     e.preventDefault();
     filmstrip.scrollLeft += e.deltaY;
+    stripUserScrolled = true; // défilement manuel : ne plus recentrer
   },
   { passive: false }
 );
+filmstrip.addEventListener('pointerdown', () => {
+  stripUserScrolled = true; // idem au glisser / clic dans le bandeau
+});
 
 stripToggle.addEventListener('click', () => setFilmstripVisible(!filmstripVisible));
 btnFilm.addEventListener('click', () => setFilmstripVisible(!filmstripVisible));
@@ -759,6 +931,9 @@ async function loadGalleryThumb(tile, file) {
     () => {
       const ph = tile.querySelector('.thumb-ph, .thumb-psd');
       if (ph) ph.replaceWith(img);
+      // la tuile vient de prendre sa vraie largeur : l'image courante
+      // ne doit pas être poussée hors de vue
+      if (!stripUserScrolled) centerCurrentThumb(false);
     },
     { once: true }
   );
@@ -1031,6 +1206,11 @@ function loadContext(context) {
   thumbQueue.length = 0;
   state.files = context.files;
   state.index = context.index;
+  // le dossier arrive trié par nom ; l'ordre choisi (date par défaut)
+  // est appliqué ici — les dates arrivent en asynchrone, l'affichage
+  // ne bloque jamais
+  if (!stripSortIsNativeOrder()) applyStripSort();
+  else updateStripSortUi();
   buildFilmstrip();
   render();
   if (window.Pro && window.Pro.active()) window.Pro.onContext();
@@ -2557,6 +2737,8 @@ stage.addEventListener('mousedown', (e) => {
   if ((e.button !== 0 && e.button !== 1) || currentFile() === null || cropMode || galleryOpen) {
     return;
   }
+  // OCR actif : le clic sur un mot démarre une sélection de texte, pas un pan
+  if (e.button === 0 && e.target.classList.contains('ocr-word')) return;
   if (e.button === 1) e.preventDefault(); // neutralise l'auto-défilement natif
   panStart = {
     x: e.clientX,
@@ -2634,6 +2816,12 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
+  // OCR actif : Ctrl+A sélectionne tout le texte reconnu (Ctrl+C natif ensuite)
+  if (ocrActive && e.ctrlKey && e.key.toLowerCase() === 'a') {
+    e.preventDefault();
+    ocrSelectAll();
+    return;
+  }
   if (e.ctrlKey && e.key.toLowerCase() === 'o') {
     e.preventDefault();
     btnOpen.click();
@@ -2701,7 +2889,8 @@ window.addEventListener('keydown', (e) => {
       window.viewer.toggleFullscreen();
       break;
     case 'Escape':
-      if (isFullscreen) window.viewer.toggleFullscreen();
+      if (ocrActive) setOcrActive(false);
+      else if (isFullscreen) window.viewer.toggleFullscreen();
       break;
   }
 });
@@ -2728,6 +2917,178 @@ window.addEventListener('resize', () => {
    n'atteigne window). */
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
+
+/* ---------- OCR : sélection du texte de l'image ----------
+   Bouton bascule, coût nul tant qu'il n'est pas activé. À l'activation, le
+   moteur OCR natif de Windows (Windows.Media.Ocr, invoqué par le process
+   main — aucune dépendance) analyse l'image affichée, puis une couche de
+   texte transparent est posée mot à mot exactement sur les pixels : le
+   texte se sélectionne et se copie comme dans un PDF. La couche suit le
+   zoom et le pan de l'image (voir applyTransform) et disparaît dès que
+   l'image change ou que le bouton est désactivé. */
+
+const OCR_MAX_DIM = 2400; // le moteur Windows plafonne vers 2600 px de côté
+
+let ocrLayer = null; // créé à la première activation
+let ocrActive = false;
+let ocrBusy = false;
+let ocrForSrc = ''; // image.src au moment de l'analyse
+let ocrCache = null; // { key, data } — dernière analyse, pour une bascule instantanée
+let ocrNoteEl = null;
+let ocrNoteTimer = 0;
+
+function ocrSyncTransform() {
+  if (ocrLayer && ocrActive) ocrLayer.style.transform = image.style.transform;
+}
+
+/* Petit message transitoire (« Aucun texte détecté »…), discret et auto-effacé. */
+function ocrNote(text) {
+  if (!ocrNoteEl) {
+    ocrNoteEl = document.createElement('div');
+    ocrNoteEl.id = 'ocr-note';
+    stage.appendChild(ocrNoteEl);
+  }
+  ocrNoteEl.textContent = text;
+  ocrNoteEl.classList.add('show');
+  clearTimeout(ocrNoteTimer);
+  ocrNoteTimer = setTimeout(() => ocrNoteEl.classList.remove('show'), 2600);
+}
+
+function ocrDeactivate() {
+  if (!ocrActive) return;
+  ocrActive = false;
+  btnOcr.classList.remove('active');
+  if (ocrLayer) {
+    const sel = window.getSelection();
+    if (sel && sel.anchorNode && ocrLayer.contains(sel.anchorNode)) sel.removeAllRanges();
+    ocrLayer.hidden = true;
+    ocrLayer.textContent = '';
+  }
+}
+
+function ocrSelectAll() {
+  if (!ocrLayer || ocrLayer.hidden) return;
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(ocrLayer);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+/* Envoie au moteur un PNG de l'image affichée, plafonné à OCR_MAX_DIM
+   (les coordonnées sont remises à l'échelle naturelle au retour). */
+async function ocrAnalyze() {
+  const w = image.naturalWidth;
+  const h = image.naturalHeight;
+  const k = Math.min(1, OCR_MAX_DIM / Math.max(w, h));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(w * k));
+  canvas.height = Math.max(1, Math.round(h * k));
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+  if (!blob) return { error: 'fail' };
+  const res = await window.viewer.ocrRun(new Uint8Array(await blob.arrayBuffer()));
+  if (!res || res.error) return { error: res ? res.error : 'fail' };
+  const asArray = (v) => (Array.isArray(v) ? v : v ? [v] : []);
+  const lines = asArray(res.lines)
+    .map((l) => asArray(l.words))
+    .filter((words) => words.length > 0);
+  return { lines, width: canvas.width };
+}
+
+/* Pose les mots reconnus : chaque mot est un span de texte transparent
+   positionné sur sa boîte englobante, puis étiré (scaleX) pour la couvrir
+   exactement — la sélection épouse ainsi les mots de l'image. Les lignes
+   sont des blocs séparés : la copie restitue espaces et retours à la ligne. */
+function ocrBuildLayer(data) {
+  if (!ocrLayer) {
+    ocrLayer = document.createElement('div');
+    ocrLayer.id = 'ocr-layer';
+    image.insertAdjacentElement('afterend', ocrLayer);
+  }
+  ocrLayer.textContent = '';
+  const factor = image.naturalWidth / data.width;
+  ocrLayer.style.width = `${image.naturalWidth}px`;
+  ocrLayer.style.height = `${image.naturalHeight}px`;
+  const spans = [];
+  for (const words of data.lines) {
+    const lineEl = document.createElement('div');
+    lineEl.className = 'ocr-line';
+    for (const wd of words) {
+      const span = document.createElement('span');
+      span.className = 'ocr-word';
+      span.textContent = wd.t;
+      span.style.left = `${wd.x * factor}px`;
+      span.style.top = `${wd.y * factor}px`;
+      span.style.fontSize = `${Math.max(4, wd.h * factor)}px`;
+      lineEl.appendChild(span);
+      // séparateur rendu (1 px, invisible) : un nœud en font-size 0 serait
+      // exclu de la sélection copiée, les mots seraient collés
+      const sep = document.createElement('span');
+      sep.className = 'ocr-sep';
+      sep.textContent = ' ';
+      lineEl.appendChild(sep);
+      spans.push([span, wd.w * factor]);
+    }
+    lineEl.lastChild.textContent = '\n'; // fin de ligne : la copie garde les retours
+    ocrLayer.appendChild(lineEl);
+  }
+  ocrLayer.hidden = false;
+  // lectures groupées avant écritures : une seule passe de layout
+  const widths = spans.map(([s]) => s.offsetWidth || 1);
+  spans.forEach(([s, target], i) => {
+    s.style.transform = `scaleX(${target / widths[i]})`;
+  });
+}
+
+async function setOcrActive(on) {
+  if (!on || ocrActive) {
+    ocrDeactivate();
+    return;
+  }
+  const file = currentFile();
+  if (!file || image.hidden || !image.complete || !image.naturalWidth || ocrBusy) return;
+  ocrBusy = true;
+  btnOcr.classList.add('is-busy');
+  try {
+    const key = `${file.path}|${image.naturalWidth}x${image.naturalHeight}`;
+    const src = image.src;
+    let data = ocrCache && ocrCache.key === key ? ocrCache.data : null;
+    if (!data) {
+      data = await ocrAnalyze();
+      if (currentFile() !== file || image.src !== src) return; // image changée entre-temps
+      if (data.error) {
+        ocrNote(
+          data.error === 'nolang'
+            ? tr('Aucune langue de reconnaissance de texte n’est installée dans Windows')
+            : tr('Reconnaissance de texte impossible sur cette image')
+        );
+        return;
+      }
+      ocrCache = { key, data };
+    }
+    if (!data.lines.length) {
+      ocrNote(tr('Aucun texte détecté'));
+      return;
+    }
+    ocrBuildLayer(data);
+    ocrForSrc = src;
+    ocrActive = true;
+    btnOcr.classList.add('active');
+    ocrSyncTransform();
+  } finally {
+    ocrBusy = false;
+    btnOcr.classList.remove('is-busy');
+  }
+}
+
+btnOcr.addEventListener('click', () => setOcrActive(!ocrActive));
+
+// toute nouvelle image (navigation, rotation, rognage…) retire la couche
+image.addEventListener('load', () => {
+  if (ocrActive && image.src !== ocrForSrc) ocrDeactivate();
+});
+image.addEventListener('error', ocrDeactivate);
 
 /* ---------- Langue de l'interface (i18n) ----------
    Liste simple des 11 langues (noms natifs) sous le bouton globe ;

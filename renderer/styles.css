@@ -1967,3 +1967,199 @@ body.light #up-divider {
   font-size: 11.5px;
   color: var(--text-faint);
 }
+
+/* ---------- OCR : couche de texte sélectionnable ----------
+   Bloc aux dimensions naturelles de l'image, calé et transformé exactement
+   comme elle (voir applyTransform). Les mots sont des spans de texte
+   transparent posés sur leur boîte détectée : seuls eux captent la souris,
+   le pan reste possible partout ailleurs. */
+
+#ocr-layer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  pointer-events: none;
+  will-change: transform;
+}
+
+#ocr-layer .ocr-line {
+  position: absolute;
+  inset: 0;
+  font-size: 0; /* les espaces inter-mots n'occupent aucune place */
+}
+
+#ocr-layer .ocr-word {
+  position: absolute;
+  pointer-events: auto;
+  user-select: text;
+  cursor: text;
+  color: transparent;
+  caret-color: transparent;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  line-height: 1;
+  white-space: pre;
+  transform-origin: 0 0;
+}
+
+#ocr-layer .ocr-word::selection {
+  background: var(--accent-border);
+}
+
+/* espace inter-mots : rendu (donc copié) mais invisible et insensible */
+#ocr-layer .ocr-sep {
+  font-size: 1px;
+  color: transparent;
+  user-select: text;
+  white-space: pre;
+}
+
+/* analyse en cours : légère pulsation de l'icône du bouton */
+#btn-ocr.is-busy svg {
+  animation: ocr-busy 0.9s ease-in-out infinite;
+}
+
+@keyframes ocr-busy {
+  50% { opacity: 0.35; }
+}
+
+/* message transitoire (« Aucun texte détecté »…) */
+#ocr-note {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%) translateY(4px);
+  z-index: 30;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+#ocr-note.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ---------- Ordre du bandeau de miniatures ----------
+   Pastille discrète à gauche du bandeau, même langage que #strip-toggle ;
+   mini-popup Nom / Date / Taille, re-clic = ordre inversé. */
+
+#strip-sort {
+  position: fixed;
+  left: 12px;
+  bottom: 98px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 23px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, bottom 0.18s ease, color 0.15s ease;
+}
+
+#strip-sort svg {
+  width: 14px;
+  height: 14px;
+}
+
+#strip-sort:hover {
+  opacity: 1;
+  color: var(--text);
+}
+
+/* ordre non standard actif : la pastille le signale en couleur d'accent */
+#strip-sort.is-sorted {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  opacity: 0.85;
+}
+
+body.pro #strip-sort {
+  bottom: 74px;
+}
+
+body.no-filmstrip #strip-sort,
+body.fullscreen #strip-sort,
+body.gallery-open #strip-sort,
+body.at-home #strip-sort {
+  display: none !important;
+}
+
+#strip-sort-popup {
+  position: fixed;
+  left: 12px;
+  bottom: 128px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+body.pro #strip-sort-popup {
+  bottom: 104px;
+}
+
+body.no-filmstrip #strip-sort-popup,
+body.fullscreen #strip-sort-popup,
+body.gallery-open #strip-sort-popup {
+  display: none !important;
+}
+
+.strip-sort-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.strip-sort-opt:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.strip-sort-opt.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.strip-sort-arrow {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  transition: transform 0.15s ease;
+}
+
+.strip-sort-arrow.asc {
+  transform: rotate(180deg);
+}
+
+.strip-sort-arrow.hidden-arrow {
+  visibility: hidden;
+}

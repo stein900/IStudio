@@ -129,6 +129,17 @@
 
       <span class="toolbar-sep" aria-hidden="true"></span>
 
+      <button id="btn-ocr" class="icon-btn" title="OCR : rendre le texte de l'image sélectionnable et copiable">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+          <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+          <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+          <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+          <path d="M7 8h8" />
+          <path d="M7 12h10" />
+          <path d="M7 16h6" />
+        </svg>
+      </button>
       <button id="btn-info" class="icon-btn" title="Informations sur l'image (I)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="9" />
@@ -388,6 +399,15 @@
       <polyline points="6 9 12 15 18 9" />
     </svg>
   </button>
+  <button id="strip-sort" title="Ordre des miniatures" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 6h12" />
+      <path d="M3 12h9" />
+      <path d="M3 18h6" />
+      <path d="m17 20 3-3m-3 3-3-3m3 3V9" />
+    </svg>
+  </button>
+  <div id="strip-sort-popup" hidden></div>
   <footer id="filmstrip" hidden></footer>
 
   <div id="lang-popup" hidden></div>
