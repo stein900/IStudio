@@ -144,6 +144,7 @@ function updateBackdrop() {
   // le décodage, sans clignoter à chaque changement d'image
   const on = gridBackdrop && !image.hidden;
   document.body.classList.toggle('grid-backdrop', on);
+  syncBigView(); // le rendu canvas des grandes images suit chaque repeint
   const show = on && image.complete && image.naturalWidth > 0;
   imageBackdrop.hidden = !show;
   if (!show) return;
@@ -151,6 +152,242 @@ function updateBackdrop() {
   imageBackdrop.style.height = `${image.naturalHeight * state.zoom}px`;
   imageBackdrop.style.transform =
     `translate(-50%, -50%) translate(${state.panX}px, ${state.panY}px)`;
+}
+
+/* ---------- Rendu fluide des très grandes images ----------
+   Une image de 10 000 px et plus force Chromium à re-rasteriser une couche
+   GPU de 100 Mpx à chaque cran de zoom ou de déplacement : la balise <img>
+   rame, quel que soit le matériel. Au-delà de BIGVIEW_THRESHOLD_PX, le
+   rendu bascule donc sur un canvas de la taille de la scène : les pixels
+   vivent dans une ImageBitmap (texture GPU) et seule la ZONE VISIBLE est
+   redessinée, une fois par frame (requestAnimationFrame) — la approche des
+   visionneuses natives, fluide à tous les niveaux de zoom. Une réduction
+   (mip) prend le relais aux zooms faibles pour une minification propre.
+   L'élément #image reste en place, simplement invisible : rognage, OCR,
+   filet de contour, fiche d'info et badge s'appuient toujours sur lui. */
+
+const imageCanvas = document.getElementById('image-canvas');
+const BIGVIEW_THRESHOLD_PX = 24e6; // au-delà de 24 Mpx, rendu par canvas
+const BIGVIEW_MIP_EDGE = 3072; // grand côté de la réduction, en pixels
+const BIGVIEW_TILE = 4096; // côté d'une tuile plein format, en pixels image
+let bigView = null; // { src, mip, placeholder, tiles, tilesReady } — image courante
+let bigViewToken = 0;
+let bigViewRaf = 0;
+let bigViewWorker = null;
+
+/* Tout le travail lourd (décodage, réduction, tuiles) se fait dans un
+   worker : le fil de l'interface ne se fige jamais, même sur 150 Mpx. */
+function ensureBigViewWorker() {
+  if (bigViewWorker) return bigViewWorker;
+  bigViewWorker = new Worker('bigview-worker.js');
+  bigViewWorker.onmessage = (e) => {
+    const m = e.data;
+    if (m.kind === 'mipdata') {
+      // encodage PNG de la réduction : cache disque pour la prochaine
+      // ouverture (indépendant de l'image affichée à cet instant)
+      if (m.filePath) {
+        window.viewer
+          .storeBigviewMip({ filePath: m.filePath, data: new Uint8Array(m.data) })
+          .catch(() => {});
+      }
+      return;
+    }
+    const stale = !bigView || m.id !== bigViewToken;
+    if (m.kind === 'mip') {
+      if (stale) {
+        m.bmp.close();
+        return;
+      }
+      if (bigView.mip) bigView.mip.close(); // le cache disque avait déjà fourni
+      bigView.mip = m.bmp;
+      if (bigView.placeholder) {
+        bigView.placeholder.close();
+        bigView.placeholder = null;
+      }
+      bigViewSchedule();
+    } else if (m.kind === 'tiles') {
+      if (stale) {
+        for (const t of m.tiles) t.bmp.close();
+        return;
+      }
+      bigView.tiles = m.tiles;
+      bigView.tilesReady = true;
+      bigViewSchedule();
+    } else if (m.kind === 'error' && !stale) {
+      bigViewReset(); // secours : rendu <img> classique, moins fluide
+    }
+  };
+  return bigViewWorker;
+}
+
+/** Octets source de l'image affichée (fichier via Node, ou blob en mémoire). */
+async function bigViewSrcBytes(file, src) {
+  try {
+    if (src === file.url || (file.fallbackUrl && src === file.fallbackUrl)) {
+      const data = await window.viewer.readFile(file.path);
+      if (!data || !data.byteLength) return null;
+      // tampon propre exigé pour le transfert vers le worker
+      return data.byteOffset === 0 && data.byteLength === data.buffer.byteLength
+        ? data
+        : data.slice();
+    }
+    const r = await fetch(src); // PSD composité, canal du mode Pro : blob
+    return new Uint8Array(await r.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+function bigViewReset() {
+  bigViewToken += 1; // invalide toute fabrication en cours
+  if (bigView) {
+    if (bigView.mip) bigView.mip.close();
+    if (bigView.placeholder) bigView.placeholder.close();
+    for (const t of bigView.tiles) t.bmp.close();
+    bigView = null;
+  }
+  imageCanvas.hidden = true;
+  image.style.visibility = '';
+}
+
+function bigViewActive() {
+  return Boolean(
+    bigView && !image.hidden && bigView.src === image.currentSrc && image.naturalWidth > 0
+  );
+}
+
+function syncBigView() {
+  const active = bigViewActive();
+  imageCanvas.hidden = !active;
+  image.style.visibility = active ? 'hidden' : '';
+  if (active) bigViewSchedule();
+}
+
+/* Un seul dessin par frame, même si zoom et pan arrivent en rafale. */
+function bigViewSchedule() {
+  if (bigViewRaf) return;
+  bigViewRaf = requestAnimationFrame(() => {
+    bigViewRaf = 0;
+    if (bigViewActive()) bigViewDrawNow();
+  });
+}
+
+function bigViewDrawNow() {
+  const dpr = window.devicePixelRatio || 1;
+  const cw = Math.max(1, Math.round(stage.clientWidth * dpr));
+  const ch = Math.max(1, Math.round(stage.clientHeight * dpr));
+  if (imageCanvas.width !== cw) imageCanvas.width = cw;
+  if (imageCanvas.height !== ch) imageCanvas.height = ch;
+  const ctx = imageCanvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  const scale = state.zoom * dpr;
+  // coin haut-gauche de l'image dans la scène : centre + pan − moitié affichée
+  const ox = (stage.clientWidth / 2 + state.panX - (image.naturalWidth * state.zoom) / 2) * dpr;
+  const oy = (stage.clientHeight / 2 + state.panY - (image.naturalHeight * state.zoom) / 2) * dpr;
+  // niveau de détail : la réduction suffit tant qu'elle couvre les pixels
+  // affichés (écran haute densité compris) — la vignette (placeholder)
+  // assure l'attente pendant le décodage, puis les tuiles le plein format
+  const needW = state.zoom * image.naturalWidth * dpr;
+  const small = bigView.mip || bigView.placeholder;
+  if (!bigView.tilesReady || (bigView.mip && needW <= bigView.mip.width)) {
+    if (!small) return; // décodage en cours, rien encore à montrer
+    const k = (image.naturalWidth / small.width) * scale;
+    ctx.setTransform(k, 0, 0, k, ox, oy);
+    ctx.drawImage(small, 0, 0);
+  } else {
+    // transformation : coordonnées image → pixels écran ; seules les tuiles
+    // qui croisent la zone visible sont dessinées
+    ctx.setTransform(scale, 0, 0, scale, ox, oy);
+    const vx0 = -ox / scale;
+    const vy0 = -oy / scale;
+    const vx1 = vx0 + cw / scale;
+    const vy1 = vy0 + ch / scale;
+    for (const t of bigView.tiles) {
+      if (t.x + t.w < vx0 || t.x > vx1 || t.y + t.h < vy0 || t.y > vy1) continue;
+      ctx.drawImage(t.bmp, t.x, t.y);
+    }
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+async function buildBigView() {
+  bigViewReset(); // libère les bitmaps de l'image précédente
+  const file = currentFile();
+  if (!file || !image.naturalWidth) return;
+  const w = image.naturalWidth;
+  const h = image.naturalHeight;
+  if (w * h <= BIGVIEW_THRESHOLD_PX) return;
+  const src = image.currentSrc;
+  const token = ++bigViewToken;
+
+  // L'<img> plein format ne doit JAMAIS être peint : la rasterisation d'une
+  // couche de 100+ Mpx était le gros à-coup ressenti à l'ouverture. Le
+  // canvas prend la main immédiatement — vignette d'abord, réduction nette
+  // dès que possible, tuiles plein format enfin.
+  bigView = { src, mip: null, placeholder: null, tiles: [], tilesReady: false };
+  syncBigView();
+
+  const isPlainFile = src === file.url || (file.fallbackUrl && src === file.fallbackUrl);
+
+  // 1) réduction en cache disque : réouverture nette en quelques millisecondes
+  let cachedMip = null;
+  if (isPlainFile) {
+    cachedMip = await window.viewer.bigviewMipCached(file.path).catch(() => null);
+    if (token !== bigViewToken) return;
+  }
+  if (cachedMip && cachedMip.byteLength) {
+    createImageBitmap(new Blob([cachedMip], { type: 'image/png' }))
+      .then((bmp) => {
+        if (token !== bigViewToken || bigView.mip) {
+          bmp.close();
+          return;
+        }
+        bigView.mip = bmp;
+        bigViewSchedule();
+      })
+      .catch(() => {});
+  } else if (isPlainFile) {
+    // 2) sinon, vignette du cache disque : aperçu immédiat pendant le décodage
+    window.viewer
+      .fileThumbnailCached(file.path)
+      .then(async (data) => {
+        if (token !== bigViewToken || !data || !data.byteLength) return;
+        const bmp = await createImageBitmap(new Blob([data], { type: 'image/jpeg' }));
+        if (token !== bigViewToken || bigView.mip || bigView.placeholder) {
+          bmp.close();
+          return;
+        }
+        bigView.placeholder = bmp;
+        bigViewSchedule();
+      })
+      .catch(() => {});
+  }
+
+  // 3) pipeline complet dans le worker : décodage, réduction, tuiles — puis
+  //    encodage de la réduction pour le cache disque si elle n'y était pas
+  const data = await bigViewSrcBytes(file, src);
+  if (token !== bigViewToken) return;
+  if (!data) {
+    bigViewReset(); // secours : rendu <img> classique
+    return;
+  }
+  ensureBigViewWorker().postMessage(
+    {
+      id: token,
+      buf: data.buffer,
+      byteOffset: data.byteOffset,
+      byteLength: data.byteLength,
+      mime: MIME_BY_EXT[extOf(file.name)] || '',
+      mipEdge: BIGVIEW_MIP_EDGE,
+      tileSize: BIGVIEW_TILE,
+      wantMipData: isPlainFile && !(cachedMip && cachedMip.byteLength),
+      filePath: file.path,
+    },
+    [data.buffer]
+  );
 }
 
 function applyGridBackdrop() {
@@ -224,6 +461,61 @@ async function refreshFileStat(file) {
   updateFileMeta();
 }
 
+/* ---------- Pastille de définition (SD → 8K UHD) ----------
+   À l'ouverture d'une image ou d'une vidéo, une pastille en haut à droite
+   de la scène annonce la classe de définition du média (SD, HD, FHD, QHD,
+   4K UHD, 5K, 8K UHD) pendant trois secondes, puis s'efface pour ne pas
+   gêner le visuel. Pour une vidéo, elle réapparaît ensuite en même temps
+   que la barre de contrôles : son opacité suit celle de la barre (voir
+   videoApplyBarOpacity, section Lecteur vidéo). */
+
+const resBadge = document.getElementById('res-badge');
+
+// classement par le grand côté : couvre portrait comme paysage
+const RES_TIERS = [
+  { edge: 7680, label: '8K UHD' },
+  { edge: 5120, label: '5K' },
+  { edge: 3840, label: '4K UHD' },
+  { edge: 2560, label: 'QHD' },
+  { edge: 1920, label: 'FHD' },
+  { edge: 1280, label: 'HD' },
+];
+
+function resolutionLabel(w, h) {
+  const edge = Math.max(w, h);
+  for (const t of RES_TIERS) if (edge >= t.edge) return t.label;
+  return 'SD';
+}
+
+let resBadgeTimer = null;
+let resBadgeHold = false; // fenêtre de 3 s après l'ouverture du média
+
+function resBadgeApply() {
+  resBadge.style.opacity = String(resBadgeHold ? 1 : videoActive ? videoBarOpacity : 0);
+}
+
+function showResBadge(w, h) {
+  if (!w || !h) return;
+  resBadge.textContent = resolutionLabel(w, h);
+  resBadgeHold = true;
+  if (resBadgeTimer) clearTimeout(resBadgeTimer);
+  resBadgeTimer = setTimeout(() => {
+    resBadgeTimer = null;
+    resBadgeHold = false;
+    resBadgeApply();
+  }, 3000);
+  resBadgeApply();
+}
+
+function hideResBadge() {
+  if (resBadgeTimer) {
+    clearTimeout(resBadgeTimer);
+    resBadgeTimer = null;
+  }
+  resBadgeHold = false;
+  resBadge.style.opacity = '0';
+}
+
 function render() {
   const file = currentFile();
   const hasFile = Boolean(file);
@@ -237,6 +529,7 @@ function render() {
   emptyState.hidden = hasFile;
   errorState.hidden = true;
   image.hidden = !hasFile || isVid;
+  if (!hasFile || isVid) bigViewReset(); // libère les textures GPU de l'image
   if (!isVid) hideVideo();
   updateBackdrop();
   stage.classList.toggle('pannable', hasFile && !cropMode && !isVid);
@@ -284,6 +577,7 @@ function render() {
 
   if (!hasFile) {
     ocrDeactivate();
+    hideResBadge();
     counter.textContent = '–';
     zoomLabel.textContent = '';
     fileNameEl.textContent = 'IStudio';
@@ -306,7 +600,9 @@ function render() {
     if (isPsdFile(file)) {
       showPsd(file);
     } else {
-      image.src = file.url;
+      // fallbackUrl : blob mémoire d'une image déjà rattrapée (chemin trop
+      // long pour le chargeur Chromium) — voir le gestionnaire d'erreur
+      image.src = file.fallbackUrl || file.url;
     }
   }
   updateBackdrop(); // masqué le temps du décodage de la nouvelle image
@@ -331,6 +627,8 @@ image.addEventListener('load', () => {
   }
   updateBackdrop(); // le mode Pro peut avoir gardé la vue sans applyTransform
   updateFileMeta();
+  showResBadge(image.naturalWidth, image.naturalHeight);
+  buildBigView(); // très grande image : bascule sur le rendu canvas fluide
   // l'image principale est là : les vignettes peuvent reprendre, et les
   // voisines se préchargent pour une navigation instantanée
   releaseThumbs();
@@ -342,12 +640,30 @@ image.addEventListener('load', () => {
   }
 });
 
-image.addEventListener('error', () => {
-  pendingUpscaleOpen = false; // image illisible : pas d'upscale automatique
+image.addEventListener('error', async () => {
   const file = currentFile();
   if (!file) return;
+  // Rattrapage avant l'écran d'erreur : le chargeur file:// de Chromium
+  // échoue parfois alors que le fichier est parfaitement lisible — chemin
+  // complet au-delà de MAX_PATH (260 caractères, fréquent sur les noms de
+  // packs générés) ou accès disque transitoire. Node n'a pas cette limite :
+  // relecture via le process main, puis affichage depuis un blob mémoire.
+  if (!isPsdFile(file) && image.src !== file.fallbackUrl) {
+    const data = await window.viewer.readFile(file.path);
+    if (currentFile() !== file) return; // l'utilisateur a déjà navigué ailleurs
+    if (data && data.byteLength) {
+      if (file.fallbackUrl) URL.revokeObjectURL(file.fallbackUrl);
+      file.fallbackUrl = URL.createObjectURL(
+        new Blob([data], { type: MIME_BY_EXT[extOf(file.name)] || 'application/octet-stream' })
+      );
+      image.src = file.fallbackUrl;
+      return; // le blob relance load/error : l'écran d'erreur attendra
+    }
+  }
+  pendingUpscaleOpen = false; // image illisible : pas d'upscale automatique
   image.hidden = true;
   updateBackdrop();
+  hideResBadge();
   errorState.hidden = false;
   errorText.textContent = tr("Impossible d'afficher cette image");
   errorName.textContent = file.name;
@@ -896,9 +1212,16 @@ let stripUserScrolled = false;
 
 function centerCurrentThumb(smooth) {
   const tile = filmstrip.querySelector('.thumb.current');
-  if (tile) {
-    tile.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'nearest', inline: 'center' });
-  }
+  if (!tile) return;
+  // Défilement calculé sur le bandeau SEUL. scrollIntoView({inline:'center'})
+  // faisait aussi défiler les ancêtres (scène, body — même en overflow
+  // hidden) quand le centrage exact était impossible : en petite fenêtre,
+  // des appuis répétés sur Suivant poussaient toute l'interface hors du
+  // cadre. scrollTo borne naturellement aux limites du bandeau.
+  const fr = filmstrip.getBoundingClientRect();
+  const tr = tile.getBoundingClientRect();
+  const left = filmstrip.scrollLeft + (tr.left - fr.left) - (fr.width - tr.width) / 2;
+  filmstrip.scrollTo({ left, behavior: smooth ? 'smooth' : 'auto' });
 }
 
 function updateThumbSelection(smooth = true) {
@@ -3069,6 +3392,7 @@ window.addEventListener('resize', () => {
     return;
   }
   if (state.fit) setFit();
+  bigViewSchedule(); // fenêtre redimensionnée : la surface canvas suit
 });
 
 /* Empêche Electron de « naviguer » vers un fichier déposé sur la fenêtre ;
@@ -3120,7 +3444,7 @@ function formatTime(s) {
 }
 
 let videoActive = false;
-let videoLoop = false; // bascule mémorisée le temps de la session
+let videoLoop = true; // toujours active par défaut — bascule le temps de la session
 
 function videoSetProgress(p) {
   videoSeek.style.setProperty('--p', String(Math.min(1, Math.max(0, p))));
@@ -3172,6 +3496,8 @@ function videoApplyBarOpacity(op) {
   videoUi.style.opacity = String(op);
   // léger retrait vers le bas en s'effaçant : la disparition a du corps
   videoUi.style.transform = `translateX(-50%) translateY(${((1 - op) * 8).toFixed(2)}px)`;
+  // la pastille de définition suit la barre (hors fenêtre des 3 s)
+  if (videoActive) resBadgeApply();
 }
 
 function videoProximityAt(x, y) {
@@ -3217,6 +3543,7 @@ function showVideo(file) {
     videoTimeCur.textContent = '0:00';
     videoTimeTotal.textContent = '0:00';
     videoLastMouse = null; // nouvelle vidéo : barre visible jusqu'au 1er geste
+    hideResBadge(); // la pastille attend les dimensions (loadedmetadata)
     videoEl.src = file.url;
     const p = videoEl.play(); // lecture immédiate, fluide dès l'ouverture
     if (p) p.catch(() => {});
@@ -3234,6 +3561,7 @@ function hideVideo() {
   videoUi.hidden = true;
   videoUi.classList.remove('is-playing');
   videoApplyBarOpacity(1); // prête pour la prochaine ouverture
+  hideResBadge();
   document.body.classList.remove('video-idle');
   if (videoCursorTimer) {
     clearTimeout(videoCursorTimer);
@@ -3309,6 +3637,7 @@ videoEl.addEventListener('loadedmetadata', () => {
   if (!videoActive) return;
   videoSyncTime();
   updateFileMeta();
+  showResBadge(videoEl.videoWidth, videoEl.videoHeight);
   // la vidéo est prête : vignettes et préchargement des voisines reprennent
   releaseThumbs();
   schedulePreload();
@@ -3419,6 +3748,7 @@ videoVolume.addEventListener('input', () => {
   videoEl.volume = Number.isFinite(storedVol) ? Math.min(1, Math.max(0, storedVol)) : 1;
   videoEl.muted = localStorage.getItem('videoMuted') === 'true';
   videoSyncVolumeUi();
+  videoSetLoop(videoLoop); // boucle active par défaut : bouton allumé dès l'ouverture
 }
 
 /* ---------- OCR : sélection du texte de l'image ----------

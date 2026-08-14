@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('viewer', {
   fileThumbnail: (filePath) => ipcRenderer.invoke('file-thumbnail', filePath),
   fileThumbnailCached: (filePath) => ipcRenderer.invoke('file-thumbnail-cached', filePath),
   storeThumbnail: (payload) => ipcRenderer.invoke('store-thumbnail', payload),
+  bigviewMipCached: (filePath) => ipcRenderer.invoke('bigview-mip-cached', filePath),
+  storeBigviewMip: (payload) => ipcRenderer.invoke('store-bigview-mip', payload),
   readFileHead: (filePath, bytes) => ipcRenderer.invoke('read-file-head', { filePath, bytes }),
   statSizes: (paths) => ipcRenderer.invoke('stat-sizes', paths),
   statMany: (paths) => ipcRenderer.invoke('stat-many', paths),
