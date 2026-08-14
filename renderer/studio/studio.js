@@ -3885,27 +3885,56 @@ window.Studio = (() => {
 
   /* ---------- Import d'images (collage, glisser-déposer) ---------- */
 
-  /** Chaque image importée devient un calque raster indépendant, centré. */
-  function importImageBlob(blob, name) {
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    img.onload = () => {
+  /** Chaque image importée devient un calque raster indépendant, centré.
+      Toutes les images d'un même dépôt sont décodées d'abord, puis posées
+      en UN SEUL commit : déposer un pack de 30 photos ne crée plus 30
+      instantanés complets du document (chacun clonant tous les calques),
+      ce qui saturait la mémoire et faisait crasher le montage. */
+  function importImageBlobs(items) {
+    const loads = items.map(
+      ({ blob, name }) =>
+        new Promise((resolve) => {
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve({ img, name });
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve(null);
+          };
+          img.src = url;
+        })
+    );
+    Promise.all(loads).then((loaded) => {
+      const ok = loaded.filter(Boolean);
+      if (!ok.length || !S) return;
       const before = C.snapshotDoc(S.doc);
-      const layer = C.createRasterLayer(name || 'Image importée', img.naturalWidth, img.naturalHeight);
-      layer.canvas.getContext('2d').drawImage(img, 0, 0);
-      layer.x = Math.round((S.doc.width - img.naturalWidth) / 2);
-      layer.y = Math.round((S.doc.height - img.naturalHeight) / 2);
-      const active = C.activeLayer(S.doc);
-      S.doc.layers.splice(S.doc.layers.indexOf(active) + 1, 0, layer);
-      S.doc.activeLayerId = layer.id;
-      URL.revokeObjectURL(url);
+      let last = null;
+      for (const { img, name } of ok) {
+        const layer = C.createRasterLayer(name || 'Image importée', img.naturalWidth, img.naturalHeight);
+        layer.canvas.getContext('2d').drawImage(img, 0, 0);
+        layer.x = Math.round((S.doc.width - img.naturalWidth) / 2);
+        layer.y = Math.round((S.doc.height - img.naturalHeight) / 2);
+        const active = C.activeLayer(S.doc);
+        S.doc.layers.splice(S.doc.layers.indexOf(active) + 1, 0, layer);
+        S.doc.activeLayerId = layer.id;
+        last = layer;
+      }
       commit(before);
       layersChanged();
       chooseTool('move');
-      status(`« ${layer.name} » importé sur un nouveau calque — outil Déplacement actif.`);
-    };
-    img.onerror = () => URL.revokeObjectURL(url);
-    img.src = url;
+      status(
+        ok.length > 1
+          ? `${ok.length} images importées, chacune sur son calque — outil Déplacement actif.`
+          : `« ${last.name} » importé sur un nouveau calque — outil Déplacement actif.`
+      );
+    });
+  }
+
+  function importImageBlob(blob, name) {
+    importImageBlobs([{ blob, name }]);
   }
 
   function onPaste(e) {
@@ -3931,7 +3960,7 @@ window.Studio = (() => {
         (f.type && f.type.startsWith('image/')) ||
         /\.(png|jpe?g|jfif|gif|bmp|webp|svg|avif|tiff?)$/i.test(f.name)
     );
-    for (const f of files) importImageBlob(f, f.name.replace(/\.[^.]+$/, ''));
+    importImageBlobs(files.map((f) => ({ blob: f, name: f.name.replace(/\.[^.]+$/, '') })));
   }
 
   function selectionToLayer(cut) {

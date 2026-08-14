@@ -320,6 +320,11 @@
     </div>
     <div id="image-backdrop" aria-hidden="true" hidden></div>
     <img id="image" alt="" draggable="false" decoding="async" hidden />
+    <!-- Rendu des très grandes images (> 24 Mpx) : seule la zone visible est
+         redessinée à chaque frame depuis une texture GPU (ImageBitmap) —
+         zoom et déplacement restent fluides à tous les niveaux, là où une
+         balise <img> força Chromium à re-rasteriser 100 Mpx à chaque cran. -->
+    <canvas id="image-canvas" hidden></canvas>
 
     <!-- Lecteur vidéo : la vidéo occupe la scène (ratio préservé) ; la barre
          de contrôles flotte en bas, son opacité suit la proximité de la
@@ -405,6 +410,11 @@
         <input id="video-volume" type="range" min="0" max="100" value="100" title="Volume" />
       </div>
     </div>
+
+    <!-- Pastille de définition (SD → 8K UHD) : haut droit de la scène,
+         visible 3 s à l'ouverture d'un média ; pour une vidéo, elle
+         réapparaît ensuite avec la barre de contrôles (même proximité). -->
+    <span id="res-badge" aria-hidden="true"></span>
 
     <div id="error-state" hidden>
       <svg class="state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

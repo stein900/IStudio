@@ -22,6 +22,12 @@
 
 window.StudioCore = (() => {
   const HISTORY_MAX = 20;
+  // Plafond mémoire des instantanés d'annulation. Chaque commit clone tous
+  // les calques raster : sur un très grand document (10 000 px et plus,
+  // 400 Mo le calque), 20 instantanés dépassaient la mémoire du process et
+  // faisaient crasher tout IStudio — perdant le montage en cours. La
+  // profondeur d'annulation s'adapte donc à la taille réelle du document.
+  const HISTORY_MAX_BYTES = 1024 * 1024 * 1024; // 1 Go
   const TEXT_LINE_HEIGHT = 1.3;
 
   /** Modes de fusion des calques → opération de composition canvas. */
@@ -944,16 +950,36 @@ window.StudioCore = (() => {
 
   /* ---------- Historique ---------- */
 
+  /** Poids mémoire (octets) des pixels d'un instantané de document. */
+  function docBytes(doc) {
+    let bytes = 0;
+    for (const l of doc.layers) {
+      if (l.kind === 'raster' && l.canvas) bytes += l.canvas.width * l.canvas.height * 4;
+    }
+    return bytes;
+  }
+
   class History {
     constructor() {
       this.past = [];
       this.future = [];
     }
 
+    /* Éviction des entrées les plus anciennes : nombre maximal ET budget
+       mémoire — au moins une entrée est toujours conservée, pour qu'un
+       Ctrl+Z reste possible même sur un document démesuré. */
+    trim() {
+      while (this.past.length > HISTORY_MAX) this.past.shift();
+      let total = this.past.reduce((sum, d) => sum + docBytes(d), 0);
+      while (this.past.length > 1 && total > HISTORY_MAX_BYTES) {
+        total -= docBytes(this.past.shift());
+      }
+    }
+
     push(before) {
       this.past.push(before);
-      if (this.past.length > HISTORY_MAX) this.past.shift();
       this.future = [];
+      this.trim();
     }
 
     undo(current) {
@@ -967,6 +993,7 @@ window.StudioCore = (() => {
       const next = this.future.pop();
       if (!next) return null;
       this.past.push(current);
+      this.trim();
       return snapshotDoc(next);
     }
 

@@ -1604,6 +1604,37 @@ ipcMain.handle('file-thumbnail-cached', async (_e, filePath) => {
   }
 });
 
+/* ---------- Cache disque des réductions (très grandes images) ----------
+   Même clé que les vignettes (chemin + mtime + taille), suffixe .mip.png :
+   à la réouverture d'une image de 100 Mpx, la réduction revient en quelques
+   millisecondes au lieu d'attendre un décodage complet de plusieurs
+   secondes — décisif pour parcourir un dataset haute résolution. */
+ipcMain.handle('bigview-mip-cached', async (_e, filePath) => {
+  try {
+    await ensureThumbCacheDir();
+    const st = await fs.stat(filePath).catch(() => null);
+    if (!st) return null;
+    return await fs.readFile(path.join(THUMB_CACHE_DIR, `${thumbCacheKey(filePath, st)}.mip.png`));
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('store-bigview-mip', async (_e, { filePath, data }) => {
+  try {
+    await ensureThumbCacheDir();
+    const st = await fs.stat(filePath).catch(() => null);
+    if (!st) return false;
+    await fs.writeFile(
+      path.join(THUMB_CACHE_DIR, `${thumbCacheKey(filePath, st)}.mip.png`),
+      Buffer.from(data)
+    );
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 /* Vignette produite par le renderer (formats que le shell ne couvre pas) :
    mise en cache disque pour les prochaines visites. */
 ipcMain.handle('store-thumbnail', async (_e, { filePath, data }) => {
