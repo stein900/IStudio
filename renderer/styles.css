@@ -26,6 +26,8 @@
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-pop: 0 22px 70px rgba(0, 0, 0, 0.6);
   --stage-center: #131318; /* centre du dégradé radial de la scène */
+  --grid-dot: rgba(255, 255, 255, 0.14); /* points du fond de transparence */
+  --grid-edge: rgba(255, 255, 255, 0.14); /* filet marquant les bords de l'image */
   --chart-bg: #131318; /* fond des canvas (histogramme, profil, comparaison) */
   --chart-luma: rgba(230, 230, 235, 0.35); /* aplat luma de l'histogramme */
   --chart-line: rgba(240, 240, 245, 0.95); /* courbe luma du profil */
@@ -65,6 +67,8 @@ body.light {
   --shadow: 0 8px 24px rgba(28, 34, 56, 0.14);
   --shadow-pop: 0 22px 70px rgba(28, 34, 56, 0.22);
   --stage-center: #e2e4ea;
+  --grid-dot: rgba(18, 22, 34, 0.18);
+  --grid-edge: rgba(18, 22, 34, 0.16);
   --chart-bg: #ffffff;
   --chart-luma: rgba(50, 54, 70, 0.28);
   --chart-line: rgba(30, 32, 44, 0.9);
@@ -350,6 +354,7 @@ body.at-home #btn-studio,
 body.at-home #btn-info,
 body.at-home #btn-print,
 body.at-home #btn-delete,
+body.at-home #btn-grid,
 body.at-home #btn-film,
 body.at-home #btn-fullscreen,
 body.at-home #mode-switch,
@@ -530,7 +535,35 @@ body.at-home.pro #stage {
   left: 50%;
   top: 50%;
   display: block;
+  z-index: 1;
   will-change: transform;
+}
+
+/* Fond de transparence : un quadrillage de points couvrant TOUTE la scène,
+   derrière l'image. Les zones transparentes d'un PNG le laissent voir, et
+   surtout le fond de la scène cesse de se confondre avec une image sombre
+   ou noire : le pourtour est texturé, l'image ne l'est pas. Le motif est
+   ancré à la scène, il ne bouge donc pas au zoom ni au déplacement. */
+body.grid-backdrop #stage {
+  background-image:
+    radial-gradient(circle at center, var(--grid-dot) 0 1.15px, transparent 1.3px),
+    radial-gradient(ellipse at center, var(--stage-center) 0%, var(--bg) 75%);
+  background-size: 12px 12px, auto;
+  background-position: center, center;
+}
+
+/* Filet tracé exactement sur les bords de l'image (dimensions calculées en
+   pixels écran par updateBackdrop, dans renderer.js). En outline plutôt
+   qu'en border, il est dessiné À L'EXTÉRIEUR du bloc : il reste donc
+   visible quand une image opaque le recouvre au pixel près, et il délimite
+   aussi bien une image transparente posée sur le quadrillage. */
+#image-backdrop {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 0;
+  pointer-events: none;
+  outline: 1px solid var(--grid-edge);
 }
 
 #empty-state,
@@ -1270,6 +1303,7 @@ body.gallery-open #btn-studio,
 body.gallery-open #btn-info,
 body.gallery-open #btn-print,
 body.gallery-open #btn-delete,
+body.gallery-open #btn-grid,
 body.gallery-open #btn-film,
 body.gallery-open #btn-fullscreen,
 body.gallery-open #mode-switch,

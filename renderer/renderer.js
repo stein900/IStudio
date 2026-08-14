@@ -5,6 +5,7 @@ const tr = (s, p) => window.I18n.t(s, p);
 
 const stage = document.getElementById('stage');
 const image = document.getElementById('image');
+const imageBackdrop = document.getElementById('image-backdrop');
 const emptyState = document.getElementById('empty-state');
 const errorState = document.getElementById('error-state');
 const errorName = document.getElementById('error-name');
@@ -28,6 +29,7 @@ const btnStudio = document.getElementById('btn-studio');
 const btnInfo = document.getElementById('btn-info');
 const btnPrint = document.getElementById('btn-print');
 const btnDelete = document.getElementById('btn-delete');
+const btnGrid = document.getElementById('btn-grid');
 const btnFilm = document.getElementById('btn-film');
 const btnFullscreen = document.getElementById('btn-fullscreen');
 const cropLayer = document.getElementById('crop-layer');
@@ -55,6 +57,7 @@ const state = {
 };
 
 let filmstripVisible = localStorage.getItem('filmstripVisible') !== 'false';
+let gridBackdrop = localStorage.getItem('gridBackdrop') !== 'false'; // fond de transparence
 let isFullscreen = false;
 let cropMode = false;
 let cropSel = { x: 0, y: 0, w: 0, h: 0 }; // en pixels affichés, relatif à #crop-area
@@ -106,9 +109,52 @@ function fitScale() {
 function applyTransform() {
   image.style.transform =
     `translate(-50%, -50%) translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+  updateBackdrop();
   zoomLabel.textContent = state.fit ? tr('Ajusté') : `${Math.round(state.zoom * 100)} %`;
   if (window.Pro && window.Pro.active()) window.Pro.onViewChanged();
 }
+
+/* ---------- Fond de transparence (quadrillage) ----------
+   Deux éléments complémentaires (styles dans styles.css) :
+    - le quadrillage de points, porté par la scène entière (classe
+      grid-backdrop sur body) : le pourtour de l'image est texturé, une
+      image sombre ou noire ne se fond donc plus dans le fond, et les zones
+      transparentes d'un PNG le laissent voir ;
+    - #image-backdrop, un bloc vide calé au pixel près sur les bords de
+      l'image, qui n'apporte que le filet de contour. Il est dimensionné en
+      pixels écran (taille naturelle × zoom) plutôt que mis à l'échelle,
+      pour que le filet garde son épaisseur à tous les zooms.
+   Rien n'est affiché avant que l'image ne soit décodée (image.complete),
+   sinon un changement d'image ferait clignoter un cadre aux dimensions de
+   la précédente. */
+
+function updateBackdrop() {
+  // le quadrillage ne dépend pas des dimensions : il reste en place pendant
+  // le décodage, sans clignoter à chaque changement d'image
+  const on = gridBackdrop && !image.hidden;
+  document.body.classList.toggle('grid-backdrop', on);
+  const show = on && image.complete && image.naturalWidth > 0;
+  imageBackdrop.hidden = !show;
+  if (!show) return;
+  imageBackdrop.style.width = `${image.naturalWidth * state.zoom}px`;
+  imageBackdrop.style.height = `${image.naturalHeight * state.zoom}px`;
+  imageBackdrop.style.transform =
+    `translate(-50%, -50%) translate(${state.panX}px, ${state.panY}px)`;
+}
+
+function applyGridBackdrop() {
+  btnGrid.classList.toggle('active', gridBackdrop);
+  updateBackdrop();
+}
+
+function setGridBackdrop(on) {
+  gridBackdrop = on;
+  localStorage.setItem('gridBackdrop', String(on));
+  applyGridBackdrop();
+}
+
+btnGrid.addEventListener('click', () => setGridBackdrop(!gridBackdrop));
+applyGridBackdrop();
 
 function clampZoom(z) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
@@ -176,6 +222,7 @@ function render() {
   emptyState.hidden = hasFile;
   errorState.hidden = true;
   image.hidden = !hasFile;
+  updateBackdrop();
   stage.classList.toggle('pannable', hasFile && !cropMode);
 
   const disable = !hasFile;
@@ -221,6 +268,7 @@ function render() {
   } else {
     image.src = file.url;
   }
+  updateBackdrop(); // masqué le temps du décodage de la nouvelle image
   refreshFileStat(file);
   updateThumbSelection();
   if (window.Pro && window.Pro.active()) window.Pro.onImageShown();
@@ -240,6 +288,7 @@ image.addEventListener('load', () => {
     // le mode Pro peut conserver la vue (verrou zoom/pan, bascule de canal)
     setFit();
   }
+  updateBackdrop(); // le mode Pro peut avoir gardé la vue sans applyTransform
   updateFileMeta();
   // l'image principale est là : les vignettes peuvent reprendre, et les
   // voisines se préchargent pour une navigation instantanée
@@ -257,6 +306,7 @@ image.addEventListener('error', () => {
   const file = currentFile();
   if (!file) return;
   image.hidden = true;
+  updateBackdrop();
   errorState.hidden = false;
   errorName.textContent = file.name;
   updateFileMeta();
