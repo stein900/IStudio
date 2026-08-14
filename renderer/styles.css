@@ -587,9 +587,10 @@ body.fullscreen #stage {
 }
 
 /* ---------- Lecteur vidéo ----------
-   La vidéo occupe toute la scène (ratio préservé) ; la barre de contrôles
-   flotte en bas, en verre dépoli. Pendant la lecture, son opacité suit EN
-   CONTINU la proximité de la souris — dégradé circulaire autour de la
+   La vidéo occupe toute la scène (ratio préservé, zoomable à la molette —
+   transform inline posée par renderer.js) ; la barre de contrôles flotte
+   en bas, en verre dépoli. Lecture en cours ou en pause, son opacité suit
+   EN CONTINU la proximité de la souris — dégradé circulaire autour de la
    barre, piloté par renderer.js (style opacity/transform inline, aucune
    transition : la réponse est instantanée). */
 
@@ -608,7 +609,7 @@ body.fullscreen #stage {
   left: 50%;
   bottom: 22px;
   transform: translateX(-50%);
-  width: min(640px, calc(100% - 48px));
+  width: min(700px, calc(100% - 48px));
   z-index: 3;
   padding: 8px 14px 8px;
   border-radius: 14px;

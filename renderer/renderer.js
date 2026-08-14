@@ -542,10 +542,11 @@ function render() {
   for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnUpscale, btnPaint, btnStudio, btnOcr, btnInfo, btnPrint, btnDelete, btnGallery, ...document.querySelectorAll('#toolbar .module-btn')]) {
     b.disabled = disable;
   }
-  // vidéo : les outils d'image n'ont pas de sens — sauf « Agrandir avec
-  // l'IA » et « Studio », qui passent le relais à VStudio (éditeur vidéo)
+  // vidéo : les outils d'image n'ont pas de sens — sauf le zoom (la vidéo
+  // se zoome aussi), « Agrandir avec l'IA » et « Studio », qui passent le
+  // relais à VStudio (éditeur vidéo)
   if (isVid) {
-    for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnPaint, btnOcr, btnPrint, ...document.querySelectorAll('#toolbar .module-btn')]) {
+    for (const b of [btnRotate, btnCrop, btnPaint, btnOcr, btnPrint, ...document.querySelectorAll('#toolbar .module-btn')]) {
       b.disabled = true;
     }
   }
@@ -592,8 +593,7 @@ function render() {
   window.viewer.setTitle(`${file.name} — IStudio`);
 
   if (isVid) {
-    zoomLabel.textContent = '';
-    showVideo(file);
+    showVideo(file); // le libellé de zoom est posé par videoApplyTransform
   } else {
     // priorité réseau/décodage à l'image principale : vignettes en pause
     if (image.src !== file.url || image.hidden) holdThumbs();
@@ -2882,11 +2882,19 @@ btnHome.addEventListener('click', goHome);
 btnPrev.addEventListener('click', prev);
 btnNext.addEventListener('click', next);
 
-btnZoomIn.addEventListener('click', () => setZoomCentered(state.zoom * 1.25));
-btnZoomOut.addEventListener('click', () => setZoomCentered(state.zoom / 1.25));
+btnZoomIn.addEventListener('click', () => {
+  if (videoActive) videoZoomCentered(videoZoom * 1.25);
+  else setZoomCentered(state.zoom * 1.25);
+});
+btnZoomOut.addEventListener('click', () => {
+  if (videoActive) videoZoomCentered(videoZoom / 1.25);
+  else setZoomCentered(state.zoom / 1.25);
+});
 
 btnFit.addEventListener('click', () => {
-  if (state.fit) {
+  if (videoActive) {
+    videoResetZoom(); // vidéo : retour à l'ajusté, toujours
+  } else if (state.fit) {
     setZoomCentered(1); // bascule Ajusté <-> 100 %
   } else {
     setFit();
@@ -3155,11 +3163,14 @@ stage.addEventListener(
   'wheel',
   (e) => {
     // galerie ouverte : la molette doit faire défiler la grille, pas
-    // zoomer l'image cachée derrière — pareil quand une vidéo est affichée
-    if (currentFile() === null || cropMode || galleryOpen || videoActive) return;
+    // zoomer l'image cachée derrière
+    if (currentFile() === null || cropMode || galleryOpen) return;
+    // au-dessus de la barre de contrôles vidéo : pas de zoom sous le curseur
+    if (videoActive && videoUi.contains(e.target)) return;
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    setZoomAt(state.zoom * factor, e.clientX, e.clientY);
+    if (videoActive) videoSetZoomAt(videoZoom * factor, e.clientX, e.clientY);
+    else setZoomAt(state.zoom * factor, e.clientX, e.clientY);
   },
   { passive: false }
 );
@@ -3168,22 +3179,37 @@ stage.addEventListener(
    sans aucune contrainte de bord. */
 let panStart = null;
 stage.addEventListener('mousedown', (e) => {
-  if ((e.button !== 0 && e.button !== 1) || currentFile() === null || cropMode || galleryOpen || videoActive) {
+  if ((e.button !== 0 && e.button !== 1) || currentFile() === null || cropMode || galleryOpen) {
     return;
   }
+  // vidéo : le pan n'existe que zoomée, et jamais depuis la barre de contrôles
+  if (videoActive && (videoZoom <= 1 || videoUi.contains(e.target))) return;
   // OCR actif : le clic sur un mot démarre une sélection de texte, pas un pan
   if (e.button === 0 && e.target.classList.contains('ocr-word')) return;
   if (e.button === 1) e.preventDefault(); // neutralise l'auto-défilement natif
   panStart = {
     x: e.clientX,
     y: e.clientY,
-    panX: state.panX,
-    panY: state.panY,
+    panX: videoActive ? videoPanX : state.panX,
+    panY: videoActive ? videoPanY : state.panY,
+    video: videoActive,
   };
+  videoPanMoved = false;
   stage.classList.add('panning');
 });
 window.addEventListener('mousemove', (e) => {
   if (!panStart) return;
+  if (panStart.video) {
+    videoPanX = panStart.panX + (e.clientX - panStart.x);
+    videoPanY = panStart.panY + (e.clientY - panStart.y);
+    // au-delà de quelques pixels, c'est un glisser : le clic de fin ne
+    // doit pas basculer lecture/pause (voir le clic sur videoEl)
+    if (Math.abs(e.clientX - panStart.x) + Math.abs(e.clientY - panStart.y) > 3) {
+      videoPanMoved = true;
+    }
+    videoApplyTransform();
+    return;
+  }
   state.panX = panStart.panX + (e.clientX - panStart.x);
   state.panY = panStart.panY + (e.clientY - panStart.y);
   applyTransform();
@@ -3310,6 +3336,9 @@ window.addEventListener('keydown', (e) => {
       case 'PageDown':
         next();
         return;
+      case '0':
+        videoResetZoom(); // retour à l'ajusté, comme 0 sur une image
+        return;
     }
   }
   if (e.ctrlKey && e.key.toLowerCase() === 'o') {
@@ -3418,9 +3447,11 @@ window.addEventListener('drop', (e) => e.preventDefault());
 /* ---------- Lecteur vidéo ----------
    Lecture native par la balise <video> de Chromium (décodeur ffmpeg déjà
    embarqué : aucune dépendance, aucun surpoids). La vidéo remplace l'image
-   dans la scène ; une barre de contrôles flottante (lecture/pause, ±5 s,
-   ±10 s, retour au début, boucle, volume, barre de progression) s'efface
-   pendant la lecture et réapparaît au moindre mouvement de souris. */
+   dans la scène — zoomable à la molette et déplaçable au glisser, comme une
+   image ; une barre de contrôles flottante (vidéo précédente/suivante,
+   lecture/pause, ±5 s, ±10 s, retour au début, boucle, volume, barre de
+   progression) s'efface quand la souris s'en éloigne — lecture en cours ou
+   en pause — et réapparaît dès qu'elle s'en approche. */
 
 const videoEl = document.getElementById('video');
 const videoUi = document.getElementById('video-ui');
@@ -3434,6 +3465,8 @@ const videoVolume = document.getElementById('video-volume');
 const videoVolumeLabel = document.getElementById('video-volume-label');
 const videoRateBtn = document.getElementById('video-rate');
 const videoRateMenu = document.getElementById('video-rate-menu');
+const videoPrevBtn = document.getElementById('video-prev');
+const videoNextBtn = document.getElementById('video-next');
 
 const VIDEO_EXT_SET = new Set(['mp4', 'm4v', 'mkv', 'mov', 'webm']);
 
@@ -3463,6 +3496,69 @@ function formatTime(s) {
 let videoActive = false;
 let videoLoop = true; // toujours active par défaut — bascule le temps de la session
 
+/* --- Zoom et pan de la vidéo ---------------------------------------------
+   Même gestuelle que l'image : molette pour zoomer sous le curseur, glisser
+   pour se déplacer une fois zoomée, boutons +/−/Ajuster de la barre d'outils.
+   Le zoom est relatif à l'ajusté (1 = la vidéo remplit la scène) et se
+   réinitialise à chaque changement de vidéo. */
+
+const VIDEO_ZOOM_MAX = 8;
+
+let videoZoom = 1;
+let videoPanX = 0;
+let videoPanY = 0;
+let videoPanMoved = false; // un glisser vient d'avoir lieu : le clic n'est pas une pause
+
+/** Échelle affichée à l'ajusté : rapport scène / pixels natifs de la vidéo. */
+function videoFitScale() {
+  const w = videoEl.videoWidth;
+  const h = videoEl.videoHeight;
+  if (!w || !h) return 1;
+  return Math.min(stage.clientWidth / w, stage.clientHeight / h);
+}
+
+function videoApplyTransform() {
+  videoEl.style.transform =
+    videoZoom === 1 && !videoPanX && !videoPanY
+      ? ''
+      : `translate(${videoPanX}px, ${videoPanY}px) scale(${videoZoom})`;
+  if (!videoActive) return;
+  stage.classList.toggle('pannable', videoZoom > 1);
+  zoomLabel.textContent =
+    videoZoom === 1 ? tr('Ajusté') : `${Math.round(videoZoom * videoFitScale() * 100)} %`;
+}
+
+/* Zoome en gardant le point (cx, cy) — coordonnées écran — fixe sous le
+   curseur. La vidéo étant centrée dans la scène, la géométrie est celle de
+   setZoomAt ; en deçà de l'ajusté le zoom se rabat sur 1, recentré. */
+function videoSetZoomAt(z, cx, cy) {
+  if (!videoActive) return;
+  z = Math.min(VIDEO_ZOOM_MAX, Math.max(1, z));
+  const rect = stage.getBoundingClientRect();
+  const ox = cx - rect.left - rect.width / 2;
+  const oy = cy - rect.top - rect.height / 2;
+  videoPanX = ox - ((ox - videoPanX) / videoZoom) * z;
+  videoPanY = oy - ((oy - videoPanY) / videoZoom) * z;
+  videoZoom = z;
+  if (z === 1) {
+    videoPanX = 0;
+    videoPanY = 0;
+  }
+  videoApplyTransform();
+}
+
+function videoZoomCentered(z) {
+  const rect = stage.getBoundingClientRect();
+  videoSetZoomAt(z, rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+function videoResetZoom() {
+  videoZoom = 1;
+  videoPanX = 0;
+  videoPanY = 0;
+  videoApplyTransform();
+}
+
 const VIDEO_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 let videoRate = 1; // vitesse de lecture — conservée le temps de la session
 let videoVol = 1; // volume effectif 0..2 ; au-delà de 1 : amplification Web Audio
@@ -3488,26 +3584,23 @@ function videoSyncTime() {
 function videoSyncPlayState() {
   const playing = videoActive && !videoEl.paused && !videoEl.ended;
   videoUi.classList.toggle('is-playing', playing);
-  if (!playing) {
-    videoApplyBarOpacity(1); // en pause : la barre reste pleinement visible
-  } else if (videoLastMouse) {
-    videoUpdateProximity(videoLastMouse.x, videoLastMouse.y);
-  }
-  // lecture sans mouvement de souris connu : la barre reste visible
-  // jusqu'au premier déplacement, qui prend alors le relais
+  if (videoLastMouse) videoUpdateProximity(videoLastMouse.x, videoLastMouse.y);
+  // sans mouvement de souris connu : la barre reste visible jusqu'au
+  // premier déplacement, qui prend alors le relais
 }
 
 /* --- Barre à opacité de proximité ----------------------------------------
-   Aucune minuterie, aucune bascule : pendant la lecture, l'opacité de la
-   barre suit EN CONTINU la distance de la souris — un dégradé circulaire
-   autour de la barre (distance au bord le plus proche, adoucie par une
-   courbe smoothstep). Sous ~60 px elle est pleinement visible, au-delà de
-   ~340 px elle a totalement disparu, et chaque mouvement met à jour
-   l'opacité instantanément. En pause, pendant un glisser de la barre de
-   progression, ou tant que la souris n'a pas bougé : toujours visible. */
+   Aucune minuterie, aucune bascule : lecture en cours OU en pause,
+   l'opacité de la barre suit EN CONTINU la distance de la souris — un
+   dégradé circulaire autour de la barre (distance au bord le plus proche,
+   adoucie par une courbe smoothstep). Sous ~90 px elle est pleinement
+   visible, au-delà de ~460 px elle a totalement disparu, et chaque
+   mouvement met à jour l'opacité instantanément. Pendant un glisser de la
+   barre de progression, menu de vitesse ouvert, ou tant que la souris n'a
+   pas bougé : toujours visible. */
 
-const VIDEO_BAR_NEAR = 60; // px : pleine opacité jusqu'à cette distance
-const VIDEO_BAR_FAR = 340; // px : invisible au-delà
+const VIDEO_BAR_NEAR = 90; // px : pleine opacité jusqu'à cette distance
+const VIDEO_BAR_FAR = 460; // px : invisible au-delà
 
 let videoLastMouse = null; // dernière position souris connue sur la scène
 let videoBarOpacity = 1;
@@ -3533,7 +3626,7 @@ function videoProximityAt(x, y) {
 
 function videoUpdateProximity(x, y) {
   if (!videoActive) return;
-  if (videoEl.paused || videoEl.ended || videoSeekDrag || !videoRateMenu.hidden) {
+  if (videoSeekDrag || !videoRateMenu.hidden) {
     videoApplyBarOpacity(1);
     return;
   }
@@ -3566,11 +3659,16 @@ function showVideo(file) {
     videoTimeCur.textContent = '0:00';
     videoTimeTotal.textContent = '0:00';
     videoLastMouse = null; // nouvelle vidéo : barre visible jusqu'au 1er geste
+    videoApplyBarOpacity(1);
+    videoResetZoom(); // chaque vidéo s'ouvre ajustée
     hideResBadge(); // la pastille attend les dimensions (loadedmetadata)
     videoEl.src = file.url;
     const p = videoEl.play(); // lecture immédiate, fluide dès l'ouverture
     if (p) p.catch(() => {});
   }
+  videoApplyTransform(); // libellé de zoom et curseur de pan à jour
+  videoPrevBtn.disabled = state.files.length < 2;
+  videoNextBtn.disabled = state.files.length < 2;
   videoSyncPlayState();
 }
 
@@ -3583,6 +3681,7 @@ function hideVideo() {
   videoEl.hidden = true;
   videoUi.hidden = true;
   videoRateMenu.hidden = true;
+  videoResetZoom(); // transform relâchée pour la prochaine ouverture
   videoUi.classList.remove('is-playing');
   videoApplyBarOpacity(1); // prête pour la prochaine ouverture
   hideResBadge();
@@ -3712,6 +3811,7 @@ async function openVideoInVStudio(module) {
 videoEl.addEventListener('loadedmetadata', () => {
   if (!videoActive) return;
   videoSyncTime();
+  videoApplyTransform(); // dimensions connues : libellé de zoom exact
   updateFileMeta();
   showResBadge(videoEl.videoWidth, videoEl.videoHeight);
   // la vidéo est prête : vignettes et préchargement des voisines reprennent
@@ -3745,8 +3845,15 @@ videoEl.addEventListener('error', () => {
 });
 
 // clic : lecture/pause — double clic : plein écran (les deux bascules de
-// lecture du double clic s'annulent, seul le plein écran reste)
-videoEl.addEventListener('click', videoTogglePlay);
+// lecture du double clic s'annulent, seul le plein écran reste). Un clic
+// qui conclut un glisser de pan ne bascule rien.
+videoEl.addEventListener('click', () => {
+  if (videoPanMoved) {
+    videoPanMoved = false;
+    return;
+  }
+  videoTogglePlay();
+});
 videoEl.addEventListener('dblclick', () => window.viewer.toggleFullscreen());
 
 stage.addEventListener('mousemove', (e) => {
@@ -3756,13 +3863,11 @@ stage.addEventListener('mousemove', (e) => {
   videoPokeCursor();
 });
 
-// souris sortie de la scène pendant la lecture : la barre s'efface
+// souris sortie de la scène : la barre s'efface (lecture ou pause)
 stage.addEventListener('mouseleave', () => {
   if (!videoActive) return;
   videoLastMouse = null;
-  if (!videoEl.paused && !videoEl.ended && !videoSeekDrag && videoRateMenu.hidden) {
-    videoApplyBarOpacity(0);
-  }
+  if (!videoSeekDrag && videoRateMenu.hidden) videoApplyBarOpacity(0);
 });
 
 /* --- Barre de progression : clic et glisser pour se déplacer --- */
@@ -3804,6 +3909,8 @@ videoSeek.addEventListener('pointercancel', videoSeekEnd);
 /* --- Boutons de la barre --- */
 
 videoPlayBtn.addEventListener('click', videoTogglePlay);
+videoPrevBtn.addEventListener('click', prev);
+videoNextBtn.addEventListener('click', next);
 document.getElementById('video-restart').addEventListener('click', videoRestart);
 document.getElementById('video-back10').addEventListener('click', () => videoSeekBy(-10));
 document.getElementById('video-back5').addEventListener('click', () => videoSeekBy(-5));
