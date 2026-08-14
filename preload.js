@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('viewer', {
   saveProject: (payload) => ipcRenderer.invoke('save-project', payload),
   openProject: () => ipcRenderer.invoke('open-project'),
   printFile: (fileUrl) => ipcRenderer.invoke('print-file', fileUrl),
+  openInVStudio: (payload) => ipcRenderer.invoke('open-in-vstudio', payload), // passerelle éditeur vidéo
+
   ocrRun: (data) => ipcRenderer.invoke('ocr-run', data),
   upscaleModels: () => ipcRenderer.invoke('upscale-models'),
   upscaleRun: (payload) => ipcRenderer.invoke('upscale-run', payload),

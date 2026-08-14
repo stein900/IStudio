@@ -566,6 +566,270 @@ body.grid-backdrop #stage {
   outline: 1px solid var(--grid-edge);
 }
 
+/* ---------- Lecteur vidéo ----------
+   La vidéo occupe toute la scène (ratio préservé) ; la barre de contrôles
+   flotte en bas, en verre dépoli. Pendant la lecture, son opacité suit EN
+   CONTINU la proximité de la souris — dégradé circulaire autour de la
+   barre, piloté par renderer.js (style opacity/transform inline, aucune
+   transition : la réponse est instantanée). */
+
+#video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  z-index: 1;
+  outline: none;
+}
+
+#video-ui {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  width: min(640px, calc(100% - 48px));
+  z-index: 3;
+  padding: 8px 14px 8px;
+  border-radius: 14px;
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(1.15);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+/* souris immobile ET loin de la barre pendant la lecture : le curseur
+   s'efface à son tour (voir videoPokeCursor dans renderer.js) */
+body.video-idle #stage {
+  cursor: none;
+}
+
+#video-seek-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#video-time-current,
+#video-time-total {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
+  min-width: 40px;
+}
+
+#video-time-current {
+  text-align: right;
+}
+
+#video-seek {
+  flex: 1;
+  padding: 8px 0; /* zone de clic généreuse autour du fin rail */
+  cursor: pointer;
+  --p: 0; /* progression 0..1, posée par renderer.js */
+  --b: 0; /* portion mise en tampon 0..1 */
+}
+
+#video-seek-track {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--slider-track);
+  transition: height 0.15s ease;
+}
+
+#video-seek:hover #video-seek-track,
+#video-seek.is-seeking #video-seek-track {
+  height: 6px;
+}
+
+#video-seek-buffer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(var(--b) * 100%);
+  border-radius: 999px;
+  background: var(--bg-active);
+}
+
+#video-seek-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(var(--p) * 100%);
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+#video-seek-handle {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--p) * 100%);
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--slider-thumb);
+  border: 1px solid var(--slider-thumb-border);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform 0.15s ease;
+  pointer-events: none;
+}
+
+#video-seek:hover #video-seek-handle,
+#video-seek.is-seeking #video-seek-handle {
+  transform: translate(-50%, -50%) scale(1);
+}
+
+#video-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.vbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.1s ease;
+}
+
+.vbtn svg {
+  width: 19px;
+  height: 19px;
+}
+
+.vbtn-skip svg {
+  width: 21px;
+  height: 21px;
+}
+
+.vbtn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.vbtn:active {
+  background: var(--bg-active);
+  transform: scale(0.94);
+}
+
+.vbtn.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.vbtn-play {
+  width: 42px;
+  height: 42px;
+  margin: 0 6px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.vbtn-play:hover {
+  background: var(--accent-hover);
+  color: var(--accent);
+}
+
+.vbtn-play svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* une seule icône visible à la fois (lecture/pause, son/coupé) */
+#video-ui:not(.is-playing) .vp-icon-pause,
+#video-ui.is-playing .vp-icon-play,
+#video-ui:not(.is-muted) .vp-icon-muted,
+#video-ui.is-muted .vp-icon-vol {
+  display: none;
+}
+
+.video-ctrl-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 8px;
+}
+
+#video-volume {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 76px;
+  height: 4px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: var(--slider-track);
+  cursor: pointer;
+  outline: none;
+}
+
+#video-volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--slider-thumb);
+  border: 1px solid var(--slider-thumb-border);
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+
+#video-volume::-webkit-slider-thumb:hover {
+  background: var(--slider-thumb-hover);
+  transform: scale(1.15);
+}
+
+/* Pastille « lecture » sur les vignettes vidéo (bandeau et galerie). */
+.thumb-video-badge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.thumb-video-badge svg {
+  width: 9px;
+  height: 9px;
+  margin-left: 1px; /* centre optique du triangle */
+}
+
+.gtile .thumb-video-badge {
+  width: 22px;
+  height: 22px;
+  top: 7px;
+  right: 7px;
+}
+
+.gtile .thumb-video-badge svg {
+  width: 11px;
+  height: 11px;
+}
+
 #empty-state,
 #error-state {
   margin: auto;

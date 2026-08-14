@@ -11,6 +11,13 @@ const IMAGE_EXTS = new Set([
   '.webp', '.ico', '.svg', '.tif', '.tiff', '.avif', '.psd',
 ]);
 
+/* Vidéos lues par la balise <video> de Chromium (décodeur ffmpeg déjà
+   embarqué dans Electron : AUCUNE dépendance ni surpoids). MP4/MOV en
+   H.264 et MKV en H.264/VP9/AV1 couvrent l'immense majorité des fichiers. */
+const VIDEO_EXTS = new Set(['.mp4', '.m4v', '.mkv', '.mov', '.webm']);
+
+const MEDIA_EXTS = new Set([...IMAGE_EXTS, ...VIDEO_EXTS]);
+
 const SMOKE = process.argv.includes('--smoke');
 
 // --smoke-psd : fabrique un PSD de test (2 calques + texte) avant
@@ -105,7 +112,7 @@ function fileFromArgv(argv) {
     if (typeof arg !== 'string' || arg.startsWith('-')) continue;
     try {
       const p = path.resolve(arg);
-      if (fssync.existsSync(p) && IMAGE_EXTS.has(path.extname(p).toLowerCase())) {
+      if (fssync.existsSync(p) && MEDIA_EXTS.has(path.extname(p).toLowerCase())) {
         return p;
       }
     } catch {
@@ -125,7 +132,7 @@ async function buildContext(filePath) {
   }
 
   const names = entries
-    .filter((e) => e.isFile() && IMAGE_EXTS.has(path.extname(e.name).toLowerCase()))
+    .filter((e) => e.isFile() && MEDIA_EXTS.has(path.extname(e.name).toLowerCase()))
     .map((e) => e.name)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   // AUCUN stat ici : sur un partage réseau (NAS), des centaines de stat en
@@ -1213,16 +1220,90 @@ ipcMain.handle('open-new-window', (_e, filePath) => {
   return true;
 });
 
+/* ---------- Passerelle VStudio (éditeur vidéo) ----------
+   Les boutons « Agrandir avec l'IA » et « Studio » d'une vidéo passent le
+   relais à VStudio : l'exécutable est lancé avec une ROUTE en argument,
+   que VStudio analyse pour ouvrir le bon module sur le bon fichier :
+
+     vstudio://open?module=<enhance|edit>&file=<chemin encodé>&from=istudio
+
+   Côté VStudio (process main) : retrouver dans process.argv l'argument
+   qui commence par « vstudio:// », puis new URL(arg) — module via
+   url.searchParams.get('module'), chemin via url.searchParams.get('file')
+   (déjà décodé par searchParams). */
+
+const VSTUDIO_DOWNLOAD_URL = 'http://stein-ind.fr/apps/download/VStudio-Setup-0.1.0.exe';
+
+function resolveVStudioExe() {
+  const candidates = [
+    process.env.VSTUDIO_PATH, // remplacement possible sans recompiler
+    process.env.LOCALAPPDATA &&
+      path.join(process.env.LOCALAPPDATA, 'Programs', 'VStudio', 'VStudio.exe'),
+    'C:\\Program Files\\VStudio\\VStudio.exe',
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      if (fssync.existsSync(p)) return p;
+    } catch {
+      // candidat illisible : on passe au suivant
+    }
+  }
+  return null;
+}
+
+/* VStudio absent : proposer son téléchargement (l'installeur s'ouvre dans
+   le navigateur par défaut). */
+async function proposeVStudioDownload(win) {
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'info',
+    title: 'VStudio',
+    message: tr('VStudio n’est pas installé sur cet ordinateur.'),
+    detail: tr(
+      'VStudio est l’éditeur vidéo compagnon d’IStudio : amélioration par IA et montage. Voulez-vous le télécharger ?'
+    ),
+    buttons: [tr('Télécharger VStudio'), tr('Annuler')],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (response === 0) shell.openExternal(VSTUDIO_DOWNLOAD_URL);
+}
+
+ipcMain.handle('open-in-vstudio', async (e, { filePath, module: mod }) => {
+  const exe = resolveVStudioExe();
+  if (!exe) {
+    await proposeVStudioDownload(senderWindow(e));
+    return false;
+  }
+  const route =
+    `vstudio://open?module=${encodeURIComponent(mod)}` +
+    `&file=${encodeURIComponent(filePath)}&from=istudio`;
+  try {
+    spawn(exe, [route], { detached: true, stdio: 'ignore' }).unref();
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 ipcMain.handle('reload-context', async (_e, filePath) => buildContext(filePath));
 
 ipcMain.handle('pick-file', async (e) => {
   const result = await dialog.showOpenDialog(senderWindow(e), {
-    title: tr('Ouvrir une image'),
+    title: tr('Ouvrir une image ou une vidéo'),
     properties: ['openFile'],
     filters: [
       {
+        name: tr('Images et vidéos'),
+        extensions: [...MEDIA_EXTS].map((e) => e.slice(1)),
+      },
+      {
         name: tr('Images'),
         extensions: [...IMAGE_EXTS].map((e) => e.slice(1)),
+      },
+      {
+        name: tr('Vidéos'),
+        extensions: [...VIDEO_EXTS].map((e) => e.slice(1)),
       },
       { name: tr('Tous les fichiers'), extensions: ['*'] },
     ],

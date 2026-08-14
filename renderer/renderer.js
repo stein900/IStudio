@@ -9,6 +9,7 @@ const imageBackdrop = document.getElementById('image-backdrop');
 const emptyState = document.getElementById('empty-state');
 const errorState = document.getElementById('error-state');
 const errorName = document.getElementById('error-name');
+const errorText = document.getElementById('error-text');
 const filmstrip = document.getElementById('filmstrip');
 const stripToggle = document.getElementById('strip-toggle');
 const counter = document.getElementById('counter');
@@ -96,6 +97,14 @@ function aspectRatio(w, h) {
 
 function currentFile() {
   return state.index >= 0 ? state.files[state.index] : null;
+}
+
+/* Change l'infobulle d'un bouton en restant compatible i18n : la phrase
+   française est aussi posée comme clé d'origine, un changement de langue
+   retraduit donc correctement (voir i18n.js). */
+function setButtonTitle(btn, frTitle) {
+  btn.dataset.i18nOrigTitle = frTitle;
+  btn.title = tr(frTitle);
 }
 
 function fitScale() {
@@ -194,7 +203,10 @@ function setFit() {
 
 function updateFileMeta() {
   const parts = [];
-  if (image.naturalWidth && image.naturalHeight && !image.hidden) {
+  if (videoActive && videoEl.videoWidth) {
+    parts.push(`${videoEl.videoWidth} × ${videoEl.videoHeight} px`);
+    if (Number.isFinite(videoEl.duration)) parts.push(formatTime(videoEl.duration));
+  } else if (image.naturalWidth && image.naturalHeight && !image.hidden) {
     parts.push(`${image.naturalWidth} × ${image.naturalHeight} px`);
   }
   if (state.stat) {
@@ -215,6 +227,7 @@ async function refreshFileStat(file) {
 function render() {
   const file = currentFile();
   const hasFile = Boolean(file);
+  const isVid = hasFile && isVideoFile(file);
 
   // accueil épuré : la barre ne montre que l'essentiel sans image ouverte
   document.body.classList.toggle('at-home', !hasFile);
@@ -223,9 +236,10 @@ function render() {
 
   emptyState.hidden = hasFile;
   errorState.hidden = true;
-  image.hidden = !hasFile;
+  image.hidden = !hasFile || isVid;
+  if (!isVid) hideVideo();
   updateBackdrop();
-  stage.classList.toggle('pannable', hasFile && !cropMode);
+  stage.classList.toggle('pannable', hasFile && !cropMode && !isVid);
 
   const disable = !hasFile;
   btnPrev.disabled = disable || state.files.length < 2;
@@ -235,6 +249,25 @@ function render() {
   for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnUpscale, btnPaint, btnStudio, btnOcr, btnInfo, btnPrint, btnDelete, btnGallery, ...document.querySelectorAll('#toolbar .module-btn')]) {
     b.disabled = disable;
   }
+  // vidéo : les outils d'image n'ont pas de sens — sauf « Agrandir avec
+  // l'IA » et « Studio », qui passent le relais à VStudio (éditeur vidéo)
+  if (isVid) {
+    for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnPaint, btnOcr, btnPrint, ...document.querySelectorAll('#toolbar .module-btn')]) {
+      b.disabled = true;
+    }
+  }
+  setButtonTitle(
+    btnUpscale,
+    isVid
+      ? "Améliorer la vidéo avec l'IA dans VStudio"
+      : "Agrandir avec l'IA (upscale ×2, ×3, ×4 ou personnalisé)"
+  );
+  setButtonTitle(
+    btnStudio,
+    isVid
+      ? 'Modifier la vidéo dans VStudio (montage)'
+      : 'Ouvrir dans Studio (montage : calques, lasso, retouche)'
+  );
 
   // la galerie suit l'état du dossier : reconstruction seulement si la
   // liste a changé (suppression, onglet, tri Pro) — une simple navigation
@@ -264,12 +297,17 @@ function render() {
   fileNameEl.textContent = file.name;
   window.viewer.setTitle(`${file.name} — IStudio`);
 
-  // priorité réseau/décodage à l'image principale : vignettes en pause
-  if (image.src !== file.url || image.hidden) holdThumbs();
-  if (isPsdFile(file)) {
-    showPsd(file);
+  if (isVid) {
+    zoomLabel.textContent = '';
+    showVideo(file);
   } else {
-    image.src = file.url;
+    // priorité réseau/décodage à l'image principale : vignettes en pause
+    if (image.src !== file.url || image.hidden) holdThumbs();
+    if (isPsdFile(file)) {
+      showPsd(file);
+    } else {
+      image.src = file.url;
+    }
   }
   updateBackdrop(); // masqué le temps du décodage de la nouvelle image
   refreshFileStat(file);
@@ -311,6 +349,7 @@ image.addEventListener('error', () => {
   image.hidden = true;
   updateBackdrop();
   errorState.hidden = false;
+  errorText.textContent = tr("Impossible d'afficher cette image");
   errorName.textContent = file.name;
   updateFileMeta();
   releaseThumbs();
@@ -334,7 +373,8 @@ function schedulePreload() {
     if (n < 2) return;
     for (const off of [1, -1]) {
       const f = state.files[(((state.index + off) % n) + n) % n];
-      if (!f || isPsdFile(f)) continue;
+      // les vidéos ne sont jamais préchargées (fichiers trop lourds)
+      if (!f || isPsdFile(f) || isVideoFile(f)) continue;
       if (preloadImgs.some((im) => im.src === f.url)) continue;
       const im = new Image();
       im.decoding = 'async';
@@ -598,6 +638,51 @@ async function thumbFromDecode(file) {
   }
 }
 
+/** Vignette d'une vidéo sans miniature système : une image est capturée
+    par un <video> hors écran (décodage matériel, quelques dizaines de ms),
+    puis renvoyée au cache disque pour les prochaines visites. */
+function thumbFromVideo(file) {
+  return new Promise((resolve) => {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.preload = 'metadata';
+    let done = false;
+    const finish = (url) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      v.removeAttribute('src');
+      v.load(); // referme le fichier immédiatement
+      resolve(url);
+    };
+    const timer = setTimeout(() => finish(null), 10000);
+    v.addEventListener('error', () => finish(null));
+    v.addEventListener('loadedmetadata', () => {
+      // un peu après le début : évite les premières images noires
+      v.currentTime = Math.min(3, (v.duration || 0) * 0.15);
+    });
+    v.addEventListener('seeked', async () => {
+      try {
+        if (!v.videoWidth || !v.videoHeight) return finish(null);
+        const k = Math.min(1, 256 / Math.max(v.videoWidth, v.videoHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(v.videoWidth * k));
+        c.height = Math.max(1, Math.round(v.videoHeight * k));
+        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+        const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.82));
+        if (!blob) return finish(null);
+        window.viewer
+          .storeThumbnail({ filePath: file.path, data: new Uint8Array(await blob.arrayBuffer()) })
+          .catch(() => {});
+        finish(URL.createObjectURL(blob));
+      } catch {
+        finish(null);
+      }
+    });
+    v.src = file.url;
+  });
+}
+
 /** Miniature d'un fichier (URL prête pour un <img>), partagée entre le
     bandeau et la galerie Global — mise en cache sur l'objet fichier. */
 async function ensureThumbUrl(file) {
@@ -611,6 +696,8 @@ async function ensureThumbUrl(file) {
   let url = null;
   if (data && data.byteLength) {
     url = URL.createObjectURL(new Blob([data], { type: 'image/jpeg' }));
+  } else if (isVideoFile(file)) {
+    url = await thumbFromVideo(file); // le worker ne décode pas la vidéo
   } else if (!isPsdFile(file)) {
     url = await thumbFromDecode(file);
     if (!url) url = file.url; // SVG et cas limites : décodage direct
@@ -673,6 +760,7 @@ function makeThumb(file, i) {
     ph.className = 'thumb-ph';
   }
   btn.append(ph, label);
+  if (isVideoFile(file)) btn.appendChild(videoBadge());
   btn.addEventListener('click', (e) => {
     // mode Pro : Ctrl + clic choisit l'image B de la comparaison
     if (e.ctrlKey && window.Pro && window.Pro.active()) {
@@ -1030,6 +1118,7 @@ function makeGalleryTile(entry, pos) {
     ph.className = 'thumb-ph';
   }
   thumb.appendChild(ph);
+  if (isVideoFile(f)) thumb.appendChild(videoBadge());
 
   const caption = document.createElement('span');
   caption.className = 'gtile-caption';
@@ -1122,6 +1211,7 @@ function moveGalleryCursor(delta) {
 function openGallery() {
   if (galleryOpen || !state.files.length || Paint.isOpen() || studioIsOpen()) return;
   if (cropMode) exitCrop();
+  if (videoActive) videoEl.pause(); // la grille recouvre la scène : silence
   galleryOpen = true;
   galleryEl.hidden = false;
   btnGallery.classList.add('active');
@@ -1756,8 +1846,8 @@ function showInfo() {
   const sep = file.path.lastIndexOf('\\') !== -1 ? '\\' : '/';
   const dir = file.path.slice(0, file.path.lastIndexOf(sep)) || file.path;
   const ext = file.name.includes('.') ? file.name.split('.').pop().toUpperCase() : '–';
-  const w = image.naturalWidth;
-  const h = image.naturalHeight;
+  const w = videoActive ? videoEl.videoWidth : image.naturalWidth;
+  const h = videoActive ? videoEl.videoHeight : image.naturalHeight;
 
   infoBody.innerHTML = '';
   infoBody.append(infoSection('Fichier'));
@@ -1767,10 +1857,14 @@ function showInfo() {
   infoBody.append(infoRow('Dossier', dir));
   infoBody.append(infoRow('Chemin complet', file.path));
 
-  infoBody.append(infoSection('Image'));
-  if (w && h && !image.hidden) {
+  infoBody.append(infoSection(videoActive ? 'Vidéo' : 'Image'));
+  if (w && h && (videoActive || !image.hidden)) {
     infoBody.append(infoRow('Dimensions', tr('{w} × {h} pixels', { w, h })));
-    infoBody.append(infoRow('Définition', tr('{n} mégapixels', { n: ((w * h) / 1e6).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) })));
+    if (videoActive && Number.isFinite(videoEl.duration)) {
+      infoBody.append(infoRow('Durée', formatTime(videoEl.duration)));
+    } else if (!videoActive) {
+      infoBody.append(infoRow('Définition', tr('{n} mégapixels', { n: ((w * h) / 1e6).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) })));
+    }
     infoBody.append(infoRow('Rapport d’aspect', aspectRatio(w, h)));
   } else {
     infoBody.append(infoRow('Dimensions', '–'));
@@ -2211,7 +2305,13 @@ document.getElementById('home-upscale').addEventListener('click', async () => {
   loadContext(ctx);
 });
 
-btnUpscale.addEventListener('click', openUpscale);
+btnUpscale.addEventListener('click', () => {
+  if (videoActive) {
+    openVideoInVStudio('enhance'); // améliorer avec l'IA : relais à VStudio
+    return;
+  }
+  openUpscale();
+});
 upClose.addEventListener('click', closeUpscale);
 upCancel.addEventListener('click', closeUpscale);
 upDiscard.addEventListener('click', closeUpscale);
@@ -2248,8 +2348,15 @@ async function deleteCurrent() {
   const file = currentFile();
   if (!file) return;
   if (cropMode) exitCrop();
+  // vidéo affichée : Chromium garde le fichier ouvert, il faut le refermer
+  // avant la mise à la corbeille (sinon Windows refuse la suppression)
+  const wasVideo = videoActive;
+  if (wasVideo) hideVideo();
   const ok = await window.viewer.deleteFile(file.path);
-  if (!ok) return;
+  if (!ok) {
+    if (wasVideo) render(); // suppression refusée : la vidéo se ré-affiche
+    return;
+  }
   state.files.splice(state.index, 1);
   if (state.files.length === 0) {
     state.index = -1;
@@ -2526,6 +2633,10 @@ function ensureStudioLoaded() {
 }
 
 btnStudio.addEventListener('click', async () => {
+  if (videoActive) {
+    openVideoInVStudio('edit'); // montage vidéo : relais à VStudio
+    return;
+  }
   const file = currentFile();
   if (!file || image.hidden || editBusy || Paint.isOpen() || studioIsOpen()) return;
   if (cropMode) exitCrop();
@@ -2721,8 +2832,8 @@ stage.addEventListener(
   'wheel',
   (e) => {
     // galerie ouverte : la molette doit faire défiler la grille, pas
-    // zoomer l'image cachée derrière
-    if (currentFile() === null || cropMode || galleryOpen) return;
+    // zoomer l'image cachée derrière — pareil quand une vidéo est affichée
+    if (currentFile() === null || cropMode || galleryOpen || videoActive) return;
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
     setZoomAt(state.zoom * factor, e.clientX, e.clientY);
@@ -2734,7 +2845,7 @@ stage.addEventListener(
    sans aucune contrainte de bord. */
 let panStart = null;
 stage.addEventListener('mousedown', (e) => {
-  if ((e.button !== 0 && e.button !== 1) || currentFile() === null || cropMode || galleryOpen) {
+  if ((e.button !== 0 && e.button !== 1) || currentFile() === null || cropMode || galleryOpen || videoActive) {
     return;
   }
   // OCR actif : le clic sur un mot démarre une sélection de texte, pas un pan
@@ -2822,6 +2933,48 @@ window.addEventListener('keydown', (e) => {
     ocrSelectAll();
     return;
   }
+  // Lecteur vidéo : Espace lecture/pause, ←/→ ±5 s (Maj : ±10 s), ↑/↓
+  // volume, Début reprend du départ, L boucle, M muet. La navigation entre
+  // fichiers passe alors par PgPréc/PgSuiv (ou les flèches de la barre).
+  if (videoActive && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    switch (e.key) {
+      case ' ':
+        e.preventDefault();
+        videoTogglePlay();
+        return;
+      case 'ArrowLeft':
+        e.preventDefault();
+        videoSeekBy(e.shiftKey ? -10 : -5);
+        return;
+      case 'ArrowRight':
+        e.preventDefault();
+        videoSeekBy(e.shiftKey ? 10 : 5);
+        return;
+      case 'ArrowUp':
+      case 'ArrowDown':
+        e.preventDefault();
+        videoNudgeVolume(e.key === 'ArrowUp' ? 0.05 : -0.05);
+        return;
+      case 'Home':
+        e.preventDefault();
+        videoRestart();
+        return;
+      case 'l':
+      case 'L':
+        videoSetLoop(!videoLoop);
+        return;
+      case 'm':
+      case 'M':
+        videoToggleMute();
+        return;
+      case 'PageUp':
+        prev();
+        return;
+      case 'PageDown':
+        next();
+        return;
+    }
+  }
   if (e.ctrlKey && e.key.toLowerCase() === 'o') {
     e.preventDefault();
     btnOpen.click();
@@ -2854,6 +3007,12 @@ window.addEventListener('keydown', (e) => {
       break;
     case 'End':
       goTo(state.files.length - 1);
+      break;
+    case 'PageUp':
+      prev();
+      break;
+    case 'PageDown':
+      next();
       break;
     case '+':
     case '=':
@@ -2917,6 +3076,350 @@ window.addEventListener('resize', () => {
    n'atteigne window). */
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
+
+/* ---------- Lecteur vidéo ----------
+   Lecture native par la balise <video> de Chromium (décodeur ffmpeg déjà
+   embarqué : aucune dépendance, aucun surpoids). La vidéo remplace l'image
+   dans la scène ; une barre de contrôles flottante (lecture/pause, ±5 s,
+   ±10 s, retour au début, boucle, volume, barre de progression) s'efface
+   pendant la lecture et réapparaît au moindre mouvement de souris. */
+
+const videoEl = document.getElementById('video');
+const videoUi = document.getElementById('video-ui');
+const videoSeek = document.getElementById('video-seek');
+const videoTimeCur = document.getElementById('video-time-current');
+const videoTimeTotal = document.getElementById('video-time-total');
+const videoPlayBtn = document.getElementById('video-play');
+const videoLoopBtn = document.getElementById('video-loop');
+const videoMuteBtn = document.getElementById('video-mute');
+const videoVolume = document.getElementById('video-volume');
+
+const VIDEO_EXT_SET = new Set(['mp4', 'm4v', 'mkv', 'mov', 'webm']);
+
+function isVideoFile(file) {
+  return VIDEO_EXT_SET.has(extOf(file.name));
+}
+
+/** Pastille « lecture » posée sur les vignettes vidéo (bandeau, galerie). */
+function videoBadge() {
+  const b = document.createElement('span');
+  b.className = 'thumb-video-badge';
+  b.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">' +
+    '<path d="M7 5.3v13.4a1 1 0 0 0 1.53.85l10.76-6.7a1 1 0 0 0 0-1.7L8.53 4.45A1 1 0 0 0 7 5.3z" /></svg>';
+  return b;
+}
+
+function formatTime(s) {
+  if (!Number.isFinite(s) || s < 0) s = 0;
+  s = Math.round(s);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
+let videoActive = false;
+let videoLoop = false; // bascule mémorisée le temps de la session
+
+function videoSetProgress(p) {
+  videoSeek.style.setProperty('--p', String(Math.min(1, Math.max(0, p))));
+}
+
+function videoSetBuffer(b) {
+  videoSeek.style.setProperty('--b', String(Math.min(1, Math.max(0, b))));
+}
+
+function videoSyncTime() {
+  videoTimeCur.textContent = formatTime(videoEl.currentTime);
+  const d = videoEl.duration;
+  if (Number.isFinite(d) && d > 0) {
+    videoTimeTotal.textContent = formatTime(d);
+    videoSetProgress(videoEl.currentTime / d);
+  }
+}
+
+function videoSyncPlayState() {
+  const playing = videoActive && !videoEl.paused && !videoEl.ended;
+  videoUi.classList.toggle('is-playing', playing);
+  if (!playing) {
+    videoApplyBarOpacity(1); // en pause : la barre reste pleinement visible
+  } else if (videoLastMouse) {
+    videoUpdateProximity(videoLastMouse.x, videoLastMouse.y);
+  }
+  // lecture sans mouvement de souris connu : la barre reste visible
+  // jusqu'au premier déplacement, qui prend alors le relais
+}
+
+/* --- Barre à opacité de proximité ----------------------------------------
+   Aucune minuterie, aucune bascule : pendant la lecture, l'opacité de la
+   barre suit EN CONTINU la distance de la souris — un dégradé circulaire
+   autour de la barre (distance au bord le plus proche, adoucie par une
+   courbe smoothstep). Sous ~60 px elle est pleinement visible, au-delà de
+   ~340 px elle a totalement disparu, et chaque mouvement met à jour
+   l'opacité instantanément. En pause, pendant un glisser de la barre de
+   progression, ou tant que la souris n'a pas bougé : toujours visible. */
+
+const VIDEO_BAR_NEAR = 60; // px : pleine opacité jusqu'à cette distance
+const VIDEO_BAR_FAR = 340; // px : invisible au-delà
+
+let videoLastMouse = null; // dernière position souris connue sur la scène
+let videoBarOpacity = 1;
+let videoCursorTimer = null; // seul le CURSEUR garde une minuterie (plein écran)
+
+function videoApplyBarOpacity(op) {
+  videoBarOpacity = op;
+  videoUi.style.opacity = String(op);
+  // léger retrait vers le bas en s'effaçant : la disparition a du corps
+  videoUi.style.transform = `translateX(-50%) translateY(${((1 - op) * 8).toFixed(2)}px)`;
+}
+
+function videoProximityAt(x, y) {
+  const r = videoUi.getBoundingClientRect();
+  const dx = Math.max(r.left - x, 0, x - r.right);
+  const dy = Math.max(r.top - y, 0, y - r.bottom);
+  const d = Math.hypot(dx, dy);
+  const t = Math.min(1, Math.max(0, (VIDEO_BAR_FAR - d) / (VIDEO_BAR_FAR - VIDEO_BAR_NEAR)));
+  return t * t * (3 - 2 * t); // smoothstep : dégradé doux, sans cassure
+}
+
+function videoUpdateProximity(x, y) {
+  if (!videoActive) return;
+  if (videoEl.paused || videoEl.ended || videoSeekDrag) {
+    videoApplyBarOpacity(1);
+    return;
+  }
+  videoApplyBarOpacity(videoProximityAt(x, y));
+}
+
+/* Le curseur, lui, s'efface après une immobilité prolongée — uniquement
+   quand la barre est déjà invisible (souris loin, lecture en cours). */
+function videoPokeCursor() {
+  document.body.classList.remove('video-idle');
+  if (videoCursorTimer) clearTimeout(videoCursorTimer);
+  videoCursorTimer = setTimeout(() => {
+    videoCursorTimer = null;
+    if (videoActive && !videoEl.paused && !videoEl.ended && videoBarOpacity <= 0.05) {
+      document.body.classList.add('video-idle');
+    }
+  }, 2500);
+}
+
+function showVideo(file) {
+  videoActive = true;
+  videoEl.hidden = false;
+  videoUi.hidden = false;
+  videoEl.loop = videoLoop;
+  if (videoEl.src !== file.url) {
+    holdThumbs(); // priorité réseau/décodage à la vidéo principale
+    videoSetProgress(0);
+    videoSetBuffer(0);
+    videoTimeCur.textContent = '0:00';
+    videoTimeTotal.textContent = '0:00';
+    videoLastMouse = null; // nouvelle vidéo : barre visible jusqu'au 1er geste
+    videoEl.src = file.url;
+    const p = videoEl.play(); // lecture immédiate, fluide dès l'ouverture
+    if (p) p.catch(() => {});
+  }
+  videoSyncPlayState();
+}
+
+function hideVideo() {
+  if (!videoActive && videoEl.hidden) return;
+  videoActive = false;
+  videoEl.pause();
+  videoEl.removeAttribute('src');
+  videoEl.load(); // libère le décodeur et referme le fichier
+  videoEl.hidden = true;
+  videoUi.hidden = true;
+  videoUi.classList.remove('is-playing');
+  videoApplyBarOpacity(1); // prête pour la prochaine ouverture
+  document.body.classList.remove('video-idle');
+  if (videoCursorTimer) {
+    clearTimeout(videoCursorTimer);
+    videoCursorTimer = null;
+  }
+}
+
+/* --- Commandes --- */
+
+function videoTogglePlay() {
+  if (!videoActive) return;
+  if (videoEl.paused || videoEl.ended) {
+    const p = videoEl.play();
+    if (p) p.catch(() => {});
+  } else {
+    videoEl.pause();
+  }
+}
+
+function videoSeekBy(delta) {
+  if (!videoActive || !Number.isFinite(videoEl.duration)) return;
+  videoEl.currentTime = Math.min(
+    Math.max(0, videoEl.currentTime + delta),
+    Math.max(0, videoEl.duration - 0.05)
+  );
+  videoSyncTime();
+}
+
+function videoRestart() {
+  if (!videoActive) return;
+  videoEl.currentTime = 0;
+  videoSyncTime();
+}
+
+function videoSetLoop(on) {
+  videoLoop = on;
+  videoEl.loop = on;
+  videoLoopBtn.classList.toggle('active', on);
+}
+
+function videoToggleMute() {
+  videoEl.muted = !videoEl.muted;
+  localStorage.setItem('videoMuted', String(videoEl.muted));
+}
+
+function videoNudgeVolume(delta) {
+  videoEl.volume = Math.min(1, Math.max(0, videoEl.volume + delta));
+  if (videoEl.volume > 0) videoEl.muted = false;
+  localStorage.setItem('videoVolume', String(videoEl.volume));
+  localStorage.setItem('videoMuted', String(videoEl.muted));
+}
+
+function videoSyncVolumeUi() {
+  videoUi.classList.toggle('is-muted', videoEl.muted || videoEl.volume === 0);
+  videoVolume.value = String(Math.round(videoEl.volume * 100));
+}
+
+/* Passe le relais à VStudio (éditeur vidéo) : le process main lance
+   l'exécutable avec une route vstudio://open?module=…&file=… — voir la
+   passerelle VStudio dans main.js pour le contrat complet. */
+async function openVideoInVStudio(module) {
+  const file = currentFile();
+  if (!file || !videoActive) return;
+  videoEl.pause(); // VStudio prend la main sur ce fichier
+  const ok = await window.viewer.openInVStudio({ filePath: file.path, module });
+  if (ok) ocrNote(tr('Ouverture dans VStudio…'));
+  // sinon : le process main a proposé de télécharger VStudio (dialogue natif)
+}
+
+/* --- Événements du média --- */
+
+videoEl.addEventListener('loadedmetadata', () => {
+  if (!videoActive) return;
+  videoSyncTime();
+  updateFileMeta();
+  // la vidéo est prête : vignettes et préchargement des voisines reprennent
+  releaseThumbs();
+  schedulePreload();
+});
+
+videoEl.addEventListener('timeupdate', () => {
+  if (videoActive) videoSyncTime();
+});
+
+videoEl.addEventListener('progress', () => {
+  if (!videoActive || !Number.isFinite(videoEl.duration) || !videoEl.duration) return;
+  const b = videoEl.buffered;
+  videoSetBuffer(b.length ? b.end(b.length - 1) / videoEl.duration : 0);
+});
+
+videoEl.addEventListener('play', videoSyncPlayState);
+videoEl.addEventListener('pause', videoSyncPlayState);
+videoEl.addEventListener('ended', videoSyncPlayState);
+videoEl.addEventListener('volumechange', videoSyncVolumeUi);
+
+videoEl.addEventListener('error', () => {
+  if (!videoActive) return;
+  const file = currentFile();
+  hideVideo();
+  errorState.hidden = false;
+  errorText.textContent = tr('Impossible de lire cette vidéo (codec non pris en charge ?)');
+  errorName.textContent = file ? file.name : '';
+  releaseThumbs();
+});
+
+// clic : lecture/pause — double clic : plein écran (les deux bascules de
+// lecture du double clic s'annulent, seul le plein écran reste)
+videoEl.addEventListener('click', videoTogglePlay);
+videoEl.addEventListener('dblclick', () => window.viewer.toggleFullscreen());
+
+stage.addEventListener('mousemove', (e) => {
+  if (!videoActive) return;
+  videoLastMouse = { x: e.clientX, y: e.clientY };
+  videoUpdateProximity(e.clientX, e.clientY);
+  videoPokeCursor();
+});
+
+// souris sortie de la scène pendant la lecture : la barre s'efface
+stage.addEventListener('mouseleave', () => {
+  if (!videoActive) return;
+  videoLastMouse = null;
+  if (!videoEl.paused && !videoEl.ended && !videoSeekDrag) videoApplyBarOpacity(0);
+});
+
+/* --- Barre de progression : clic et glisser pour se déplacer --- */
+
+let videoSeekDrag = false;
+
+function videoSeekToEvent(e) {
+  const rect = videoSeek.getBoundingClientRect();
+  if (!rect.width) return;
+  const p = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+  if (Number.isFinite(videoEl.duration) && videoEl.duration > 0) {
+    videoEl.currentTime = p * videoEl.duration;
+  }
+  videoSetProgress(p);
+  videoTimeCur.textContent = formatTime(videoEl.currentTime);
+}
+
+videoSeek.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !videoActive) return;
+  videoSeekDrag = true;
+  videoSeek.classList.add('is-seeking');
+  videoSeek.setPointerCapture(e.pointerId);
+  videoSeekToEvent(e);
+});
+
+videoSeek.addEventListener('pointermove', (e) => {
+  if (videoSeekDrag) videoSeekToEvent(e);
+});
+
+const videoSeekEnd = () => {
+  videoSeekDrag = false;
+  videoSeek.classList.remove('is-seeking');
+  // fin du glisser : l'opacité reprend la main selon la position réelle
+  if (videoLastMouse) videoUpdateProximity(videoLastMouse.x, videoLastMouse.y);
+};
+videoSeek.addEventListener('pointerup', videoSeekEnd);
+videoSeek.addEventListener('pointercancel', videoSeekEnd);
+
+/* --- Boutons de la barre --- */
+
+videoPlayBtn.addEventListener('click', videoTogglePlay);
+document.getElementById('video-restart').addEventListener('click', videoRestart);
+document.getElementById('video-back10').addEventListener('click', () => videoSeekBy(-10));
+document.getElementById('video-back5').addEventListener('click', () => videoSeekBy(-5));
+document.getElementById('video-fwd5').addEventListener('click', () => videoSeekBy(5));
+document.getElementById('video-fwd10').addEventListener('click', () => videoSeekBy(10));
+videoLoopBtn.addEventListener('click', () => videoSetLoop(!videoLoop));
+videoMuteBtn.addEventListener('click', videoToggleMute);
+
+videoVolume.addEventListener('input', () => {
+  videoEl.volume = Number(videoVolume.value) / 100;
+  if (videoEl.volume > 0) videoEl.muted = false;
+  localStorage.setItem('videoVolume', String(videoEl.volume));
+  localStorage.setItem('videoMuted', String(videoEl.muted));
+});
+
+// volume et sourdine mémorisés d'une session à l'autre (défaut : 100 %)
+{
+  const rawVol = localStorage.getItem('videoVolume');
+  const storedVol = rawVol === null ? 1 : Number(rawVol);
+  videoEl.volume = Number.isFinite(storedVol) ? Math.min(1, Math.max(0, storedVol)) : 1;
+  videoEl.muted = localStorage.getItem('videoMuted') === 'true';
+  videoSyncVolumeUi();
+}
 
 /* ---------- OCR : sélection du texte de l'image ----------
    Bouton bascule, coût nul tant qu'il n'est pas activé. À l'activation, le
