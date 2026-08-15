@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('viewer', {
     ipcRenderer.on('upscale-progress', (_event, pct) => callback(pct));
   },
   exportSvg: (payload) => ipcRenderer.invoke('export-svg', payload), // Module Export SVG
+  convertExport: (payload) => ipcRenderer.invoke('convert-export', payload), // Module Convertir
   setLocale: (code) => ipcRenderer.invoke('set-locale', code), // i18n : dialogues natifs
   onFullscreenChanged: (callback) => {
     ipcRenderer.on('fullscreen-changed', (_event, isFullscreen) => callback(isFullscreen));

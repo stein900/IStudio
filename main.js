@@ -1022,6 +1022,49 @@ function createWindow(contextPromise = null) {
           }
           app.quit();
         }, 1500);
+      } else if (process.argv.includes('--smoke-convert')) {
+        // Module Convertir : bouton et carte d'accueil présents, popup,
+        // encodage réel en JPEG / ICO / TIFF, export du TIFF écrit à la
+        // main par convert-worker.js (vérification du nombre magique).
+        setTimeout(async () => {
+          try {
+            const r = await mainWindow.webContents.executeJavaScript(
+              `(async () => {
+                 const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+                 const btnPresent = Boolean(document.getElementById('cvt-btn'));
+                 const homeCard = Boolean(document.getElementById('home-convert'));
+                 document.getElementById('cvt-btn').click();
+                 await wait(1500);
+                 const resultShown = !document.getElementById('cvt-result').hidden;
+                 const pick = async (id) => {
+                   document.querySelector('.cvt-format[data-id="' + id + '"]').click();
+                   await wait(1200);
+                   return document.getElementById('cvt-stats').textContent.replace(/\\s+/g, ' ');
+                 };
+                 const statsJpeg = await pick('jpeg');
+                 const qualityShown = !document.getElementById('cvt-quality-row').hidden;
+                 const statsIco = await pick('ico');
+                 const statsTiff = await pick('tiff');
+                 const previewBlob = document.getElementById('cvt-preview').src.startsWith('blob:');
+                 document.getElementById('cvt-save').click();
+                 await wait(800);
+                 const closedAfterSave = document.getElementById('cvt-backdrop').hidden;
+                 return { btnPresent, homeCard, resultShown, statsJpeg, qualityShown,
+                          statsIco, statsTiff, previewBlob, closedAfterSave };
+               })()`
+            );
+            let tiffOk = false;
+            if (lastSmokeExport && fssync.existsSync(lastSmokeExport)) {
+              const head = fssync.readFileSync(lastSmokeExport).subarray(0, 4);
+              tiffOk = head[0] === 0x49 && head[1] === 0x49 && head[2] === 42 && head[3] === 0;
+              fssync.unlinkSync(lastSmokeExport);
+            }
+            console.log(`SMOKE CONVERT: ${JSON.stringify({ ...r, export: lastSmokeExport, tiffOk })}`);
+          } catch (err) {
+            console.log(`SMOKE CONVERT ERROR: ${err.message}`);
+          }
+          app.quit();
+        }, 1500);
       } else if (process.argv.includes('--smoke-gallery')) {
         // Galerie Global : grille remplie, recherche, tri par taille
         // (stats à la demande), filtre par format, clavier, clic.
@@ -1208,6 +1251,13 @@ function createWindow(contextPromise = null) {
     });
   }
   return win;
+}
+
+/* Tests smoke : répertoire de données dédié, pour que l'instance de test
+   ait son propre verrou mono-instance et puisse tourner à côté de
+   l'application installée (sinon le lancement lui est simplement délégué). */
+if (SMOKE) {
+  app.setPath('userData', path.join(app.getPath('temp'), 'istudio-smoke'));
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -2133,6 +2183,48 @@ ipcMain.handle('export-svg', async (e, { suggestedName, data }) => {
       { name: tr('Image vectorielle SVG'), extensions: ['svg'] },
       { name: tr('Tous les fichiers'), extensions: ['*'] },
     ],
+  });
+  if (canceled || !filePath) return null;
+  try {
+    await fs.writeFile(filePath, Buffer.from(data));
+    return filePath;
+  } catch {
+    return null;
+  }
+});
+
+/* ---------- Module Convertir (renderer/convert) ----------
+   Seul point d'entrée côté main du module : dialogue d'enregistrement du
+   fichier converti par le renderer, avec le filtre du format choisi.
+   Supprimer ce bloc (et l'entrée convertExport du preload) pour
+   débrancher le module. */
+const CONVERT_FILTERS = {
+  png: { name: 'Image PNG', extensions: ['png'] },
+  jpeg: { name: 'Image JPEG', extensions: ['jpg', 'jpeg'] },
+  webp: { name: 'Image WebP', extensions: ['webp'] },
+  tiff: { name: 'Image TIFF', extensions: ['tif', 'tiff'] },
+  bmp: { name: 'Image BMP', extensions: ['bmp'] },
+  ico: { name: 'Icône Windows ICO', extensions: ['ico'] },
+};
+
+ipcMain.handle('convert-export', async (e, { suggestedName, data, format }) => {
+  if (SMOKE) {
+    const p = path.join(app.getPath('temp'), suggestedName);
+    try {
+      await fs.writeFile(p, Buffer.from(data));
+      lastSmokeExport = p;
+      return p;
+    } catch {
+      return null;
+    }
+  }
+  const filter = CONVERT_FILTERS[format];
+  const filters = filter ? [{ name: tr(filter.name), extensions: filter.extensions }] : [];
+  filters.push({ name: tr('Tous les fichiers'), extensions: ['*'] });
+  const { canceled, filePath } = await dialog.showSaveDialog(senderWindow(e), {
+    title: tr('Convertir l’image'),
+    defaultPath: suggestedName,
+    filters,
   });
   if (canceled || !filePath) return null;
   try {
