@@ -54,6 +54,30 @@
           <polyline points="9 18 15 12 9 6" />
         </svg>
       </button>
+      <!-- Filtre de navigation : restreint les contenus atteignables par
+           précédent/suivant (boutons, clavier, flèches de la scène) à tout,
+           images seules ou vidéos seules. Choix mémorisé. -->
+      <div id="nav-filter">
+        <button id="nav-filter-all" class="nav-filter-opt" title="Naviguer dans tout le contenu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="8" y="8" width="13" height="13" rx="2" />
+            <path d="M16 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h1" />
+          </svg>
+        </button>
+        <button id="nav-filter-img" class="nav-filter-opt" title="Naviguer seulement entre les images">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <path d="m21 15-5-5L5 21" />
+          </svg>
+        </button>
+        <button id="nav-filter-vid" class="nav-filter-opt" title="Naviguer seulement entre les vidéos">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2.5" y="4.5" width="19" height="15" rx="2.5" />
+            <path d="m10 9 5 3-5 3z" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div id="file-info">
@@ -428,6 +452,21 @@
         </button>
       </div>
     </div>
+
+    <!-- Flèches de navigation flottantes : centrées verticalement aux bords
+         gauche et droit de la scène — indispensables en plein écran, où la
+         barre d'outils a disparu. Comme la barre du lecteur vidéo, elles ne
+         se révèlent que quand la souris s'en approche (renderer.js). -->
+    <button id="stage-nav-prev" class="stage-nav is-off" title="Contenu précédent (←)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="15 18 9 12 15 6" />
+      </svg>
+    </button>
+    <button id="stage-nav-next" class="stage-nav is-off" title="Contenu suivant (→)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="9 18 15 12 9 6" />
+      </svg>
+    </button>
 
     <!-- Pastille de définition (SD → 8K UHD) : haut droit de la scène,
          visible 3 s à l'ouverture d'un média ; pour une vidéo, elle

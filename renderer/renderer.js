@@ -535,8 +535,7 @@ function render() {
   stage.classList.toggle('pannable', hasFile && !cropMode && !isVid);
 
   const disable = !hasFile;
-  btnPrev.disabled = disable || state.files.length < 2;
-  btnNext.disabled = disable || state.files.length < 2;
+  navSyncControls(); // précédent/suivant, barre vidéo et flèches de la scène
   // .module-btn : boutons injectés par les modules optionnels (voir la
   // section « Modules optionnels » en fin de fichier) — même cycle de vie
   for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnUpscale, btnPaint, btnStudio, btnOcr, btnInfo, btnPrint, btnDelete, btnGallery, ...document.querySelectorAll('#toolbar .module-btn')]) {
@@ -687,8 +686,17 @@ function schedulePreload() {
     preloadImgs = [];
     const n = state.files.length;
     if (n < 2) return;
-    for (const off of [1, -1]) {
-      const f = state.files[(((state.index + off) % n) + n) % n];
+    for (const dir of [1, -1]) {
+      // le voisin réellement atteignable : le filtre de navigation
+      // (Tout / Images / Vidéos) peut sauter des fichiers intermédiaires
+      let f = null;
+      for (let k = 1; k < n; k++) {
+        const cand = state.files[(((state.index + dir * k) % n) + n) % n];
+        if (navMatches(cand)) {
+          f = cand;
+          break;
+        }
+      }
       // les vidéos ne sont jamais préchargées (fichiers trop lourds)
       if (!f || isPsdFile(f) || isVideoFile(f)) continue;
       if (preloadImgs.some((im) => im.src === f.url)) continue;
@@ -1602,12 +1610,46 @@ function goTo(index) {
   render();
 }
 
+/* Filtre de navigation (sélecteur de la barre d'outils) : « Tout »,
+   « Images » ou « Vidéos ». Toute la navigation séquentielle — boutons
+   précédent/suivant, clavier, flèches de la scène, barre vidéo — saute
+   alors les fichiers de l'autre type. Choix mémorisé entre sessions. */
+let navFilter = localStorage.getItem('navFilter');
+if (navFilter !== 'img' && navFilter !== 'vid') navFilter = 'all';
+
+function navMatches(file) {
+  if (navFilter === 'img') return !isVideoFile(file);
+  if (navFilter === 'vid') return isVideoFile(file);
+  return true;
+}
+
+/* Existe-t-il un AUTRE fichier atteignable avec le filtre courant ? */
+function navHasTarget() {
+  for (let i = 0; i < state.files.length; i++) {
+    if (i !== state.index && navMatches(state.files[i])) return true;
+  }
+  return false;
+}
+
+/* Prochain fichier conforme au filtre dans la direction donnée (boucle). */
+function navStep(dir) {
+  const n = state.files.length;
+  for (let k = 1; k <= n; k++) {
+    const i = (((state.index + dir * k) % n) + n) % n;
+    if (i === state.index) return;
+    if (navMatches(state.files[i])) {
+      goTo(i);
+      return;
+    }
+  }
+}
+
 function next() {
-  goTo(state.index + 1);
+  navStep(1);
 }
 
 function prev() {
-  goTo(state.index - 1);
+  navStep(-1);
 }
 
 function loadContext(context) {
@@ -1678,6 +1720,7 @@ function enterCrop() {
   cropSel = { x: w * 0.125, y: h * 0.125, w: w * 0.75, h: h * 0.75 };
   layoutCropSelection();
   cropLayer.hidden = false;
+  stageNavSync(); // les flèches de la scène s'effacent pendant le rognage
 }
 
 function exitCrop() {
@@ -1685,6 +1728,7 @@ function exitCrop() {
   cropLayer.hidden = true;
   btnCrop.classList.remove('active');
   stage.classList.toggle('pannable', Boolean(currentFile()) && !image.hidden);
+  stageNavSync();
 }
 
 function loadImageFromBlob(blob) {
@@ -3182,6 +3226,8 @@ stage.addEventListener('mousedown', (e) => {
   if ((e.button !== 0 && e.button !== 1) || currentFile() === null || cropMode || galleryOpen) {
     return;
   }
+  // flèches de navigation flottantes : le clic navigue, il ne panne pas
+  if (e.target.closest('.stage-nav')) return;
   // vidéo : le pan n'existe que zoomée, et jamais depuis la barre de contrôles
   if (videoActive && (videoZoom <= 1 || videoUi.contains(e.target))) return;
   // OCR actif : le clic sur un mot démarre une sélection de texte, pas un pan
@@ -3667,8 +3713,8 @@ function showVideo(file) {
     if (p) p.catch(() => {});
   }
   videoApplyTransform(); // libellé de zoom et curseur de pan à jour
-  videoPrevBtn.disabled = state.files.length < 2;
-  videoNextBtn.disabled = state.files.length < 2;
+  videoPrevBtn.disabled = !navHasTarget();
+  videoNextBtn.disabled = !navHasTarget();
   videoSyncPlayState();
 }
 
@@ -3857,6 +3903,8 @@ videoEl.addEventListener('click', () => {
 videoEl.addEventListener('dblclick', () => window.viewer.toggleFullscreen());
 
 stage.addEventListener('mousemove', (e) => {
+  stageNavLastMouse = { x: e.clientX, y: e.clientY };
+  stageNavApply(e.clientX, e.clientY); // flèches de navigation (image ET vidéo)
   if (!videoActive) return;
   videoLastMouse = { x: e.clientX, y: e.clientY };
   videoUpdateProximity(e.clientX, e.clientY);
@@ -3865,6 +3913,8 @@ stage.addEventListener('mousemove', (e) => {
 
 // souris sortie de la scène : la barre s'efface (lecture ou pause)
 stage.addEventListener('mouseleave', () => {
+  stageNavLastMouse = null;
+  stageNavApply(null, 0); // les flèches aussi
   if (!videoActive) return;
   videoLastMouse = null;
   if (!videoSeekDrag && videoRateMenu.hidden) videoApplyBarOpacity(0);
@@ -3873,6 +3923,7 @@ stage.addEventListener('mouseleave', () => {
 /* --- Barre de progression : clic et glisser pour se déplacer --- */
 
 let videoSeekDrag = false;
+let videoSeekWasPlaying = false; // lecture en cours au moment de saisir le curseur
 
 function videoSeekToEvent(e) {
   const rect = videoSeek.getBoundingClientRect();
@@ -3888,6 +3939,11 @@ function videoSeekToEvent(e) {
 videoSeek.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || !videoActive) return;
   videoSeekDrag = true;
+  // chercher un instant précis pendant que l'image défile est pénible :
+  // la lecture est suspendue le temps du glisser, et ne reprend au relâché
+  // que si elle était en cours au moment de saisir le curseur
+  videoSeekWasPlaying = !videoEl.paused && !videoEl.ended;
+  if (videoSeekWasPlaying) videoEl.pause();
   videoSeek.classList.add('is-seeking');
   videoSeek.setPointerCapture(e.pointerId);
   videoSeekToEvent(e);
@@ -3898,7 +3954,13 @@ videoSeek.addEventListener('pointermove', (e) => {
 });
 
 const videoSeekEnd = () => {
+  if (!videoSeekDrag) return;
   videoSeekDrag = false;
+  if (videoSeekWasPlaying) {
+    videoSeekWasPlaying = false;
+    const p = videoEl.play();
+    if (p) p.catch(() => {});
+  }
   videoSeek.classList.remove('is-seeking');
   // fin du glisser : l'opacité reprend la main selon la position réelle
   if (videoLastMouse) videoUpdateProximity(videoLastMouse.x, videoLastMouse.y);
@@ -3962,6 +4024,84 @@ document.addEventListener('click', (e) => {
   videoSyncVolumeUi();
   videoSetLoop(videoLoop); // boucle active par défaut : bouton allumé dès l'ouverture
 }
+
+/* ---------- Flèches de navigation de la scène + filtre de contenu ----------
+   Deux flèches flottantes, centrées verticalement aux bords gauche et
+   droit : indispensables en plein écran, où la barre d'outils a disparu.
+   Comme la barre du lecteur vidéo, leur opacité suit EN CONTINU la
+   proximité de la souris (smoothstep) — invisibles, elles ne captent aucun
+   clic. Le sélecteur Tout / Images / Vidéos de la barre d'outils filtre
+   les contenus atteignables (voir navStep). */
+
+const stageNavPrev = document.getElementById('stage-nav-prev');
+const stageNavNext = document.getElementById('stage-nav-next');
+const navFilterBtns = {
+  all: document.getElementById('nav-filter-all'),
+  img: document.getElementById('nav-filter-img'),
+  vid: document.getElementById('nav-filter-vid'),
+};
+
+const STAGE_NAV_NEAR = 70; // px : pleine opacité en deçà de cette distance
+const STAGE_NAV_FAR = 300; // px : invisible au-delà
+
+let stageNavLastMouse = null; // dernière position souris connue sur la scène
+
+function stageNavOpacityAt(btn, x, y) {
+  const r = btn.getBoundingClientRect();
+  const dx = Math.max(r.left - x, 0, x - r.right);
+  const dy = Math.max(r.top - y, 0, y - r.bottom);
+  const d = Math.hypot(dx, dy);
+  const t = Math.min(1, Math.max(0, (STAGE_NAV_FAR - d) / (STAGE_NAV_FAR - STAGE_NAV_NEAR)));
+  return t * t * (3 - 2 * t); // smoothstep : même dégradé que la barre vidéo
+}
+
+function stageNavApply(x, y) {
+  const off = stageNavPrev.classList.contains('is-off');
+  for (const btn of [stageNavPrev, stageNavNext]) {
+    const op = off || x == null ? 0 : stageNavOpacityAt(btn, x, y);
+    btn.style.opacity = String(op);
+    btn.style.pointerEvents = op > 0.25 ? 'auto' : 'none';
+  }
+}
+
+/* Montre ou retire les flèches selon l'état courant, puis réapplique
+   l'opacité de proximité avec la dernière position souris connue. */
+function stageNavSync() {
+  const on = Boolean(currentFile()) && navHasTarget() && !cropMode;
+  stageNavPrev.classList.toggle('is-off', !on);
+  stageNavNext.classList.toggle('is-off', !on);
+  stageNavApply(stageNavLastMouse ? stageNavLastMouse.x : null, stageNavLastMouse ? stageNavLastMouse.y : 0);
+}
+
+stageNavPrev.addEventListener('click', prev);
+stageNavNext.addEventListener('click', next);
+
+/* --- Filtre Tout / Images / Vidéos --- */
+
+/* Toutes les commandes de navigation suivent le filtre : sans autre
+   fichier atteignable, elles se désactivent (et les flèches s'effacent). */
+function navSyncControls() {
+  const can = Boolean(currentFile()) && navHasTarget();
+  btnPrev.disabled = !can;
+  btnNext.disabled = !can;
+  videoPrevBtn.disabled = !can;
+  videoNextBtn.disabled = !can;
+  stageNavSync();
+}
+
+function setNavFilter(f) {
+  navFilter = f;
+  localStorage.setItem('navFilter', f);
+  for (const [k, b] of Object.entries(navFilterBtns)) {
+    b.classList.toggle('is-active', k === f);
+  }
+  navSyncControls();
+}
+
+for (const [k, b] of Object.entries(navFilterBtns)) {
+  b.addEventListener('click', () => setNavFilter(k));
+}
+setNavFilter(navFilter); // état initial, mémorisé d'une session à l'autre
 
 /* ---------- OCR : sélection du texte de l'image ----------
    Bouton bascule, coût nul tant qu'il n'est pas activé. À l'activation, le

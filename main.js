@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage, screen } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const fssync = require('fs');
@@ -162,15 +162,54 @@ async function buildContext(filePath) {
 app.setName('IStudio');
 app.setAppUserModelId('fr.ahg.istudio.viewer');
 
+/* Taille, position et état maximisé de la fenêtre mémorisés dans userData :
+   l'application rouvre exactement comme elle a été fermée. */
+const windowStatePath = () => path.join(app.getPath('userData'), 'window-state.json');
+
+function loadWindowState() {
+  try {
+    const s = JSON.parse(fssync.readFileSync(windowStatePath(), 'utf8'));
+    if (!Number.isFinite(s.width) || !Number.isFinite(s.height)) return null;
+    // La position n'est reprise que si elle reste visible sur un écran
+    // actuel (un moniteur débranché ne doit pas rouvrir la fenêtre hors champ).
+    const visible = Number.isFinite(s.x) && Number.isFinite(s.y) &&
+      screen.getAllDisplays().some(({ workArea: a }) => (
+        s.x < a.x + a.width && s.x + s.width > a.x &&
+        s.y < a.y + a.height && s.y + s.height > a.y
+      ));
+    return {
+      width: s.width,
+      height: s.height,
+      maximized: Boolean(s.maximized),
+      ...(visible ? { x: s.x, y: s.y } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveWindowState(win) {
+  try {
+    // getNormalBounds : la taille « restaurée », même si la fenêtre est
+    // maximisée ou plein écran au moment de la fermeture.
+    const state = { ...win.getNormalBounds(), maximized: win.isMaximized() };
+    fssync.writeFileSync(windowStatePath(), JSON.stringify(state));
+  } catch {
+    // l'échec d'écriture ne doit jamais bloquer la fermeture
+  }
+}
+
 function createWindow(contextPromise = null) {
   // icône de fenêtre en dev (l'application installée reprend l'icône de
   // l'exécutable) : l'ICO multi-résolutions évite tout flou de mise à l'échelle
   const iconPath = path.join(__dirname, 'build', 'icon.ico');
+  const winState = loadWindowState();
   const win = new BrowserWindow({
     title: 'IStudio',
     ...(fssync.existsSync(iconPath) ? { icon: iconPath } : {}),
-    width: 1280,
-    height: 840,
+    width: winState ? winState.width : 1280,
+    height: winState ? winState.height : 840,
+    ...(winState && winState.x !== undefined ? { x: winState.x, y: winState.y } : {}),
     minWidth: 920,
     minHeight: 480,
     backgroundColor: '#0e0e11',
@@ -187,7 +226,12 @@ function createWindow(contextPromise = null) {
   const isFirst = mainWindow === null;
   if (isFirst) mainWindow = win;
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    // maximiser avant show() : aucun flash de la fenêtre à taille réduite
+    if (winState && winState.maximized) win.maximize();
+    win.show();
+  });
+  win.on('close', () => saveWindowState(win));
   win.on('enter-full-screen', () => {
     win.webContents.send('fullscreen-changed', true);
   });
