@@ -169,7 +169,13 @@ function updateBackdrop() {
 const imageCanvas = document.getElementById('image-canvas');
 const BIGVIEW_THRESHOLD_PX = 24e6; // au-delà de 24 Mpx, rendu par canvas
 const BIGVIEW_MIP_EDGE = 3072; // grand côté de la réduction, en pixels
-const BIGVIEW_TILE = 4096; // côté d'une tuile plein format, en pixels image
+/* Côté d'une tuile plein format, en pixels image. 1024 plutôt que 4096 :
+   l'envoi GPU d'une tuile froide (~4 Mo) tient dans le budget d'une frame,
+   ce qui permet d'étaler les envois (voir bigViewDrawNow) au lieu de les
+   subir d'un bloc — sur 169 Mpx, les ~670 Mo de tuiles dépassent le budget
+   de textures de Chromium et sont réévincés à chaque passage en réduction,
+   donc ce coût revient à CHAQUE franchissement du seuil, pas qu'au premier. */
+const BIGVIEW_TILE = 1024;
 let bigView = null; // { src, mip, placeholder, tiles, tilesReady } — image courante
 let bigViewToken = 0;
 let bigViewRaf = 0;
@@ -305,10 +311,41 @@ function bigViewDrawNow() {
     const vy0 = -oy / scale;
     const vx1 = vx0 + cw / scale;
     const vy1 = vy0 + ch / scale;
+    /* Une tuile « froide » (absente de la frame précédente : premier
+       affichage, retour depuis la réduction après éviction GPU, ou entrée
+       dans la zone visible en pan) doit être renvoyée au GPU au moment du
+       dessin. Envoyées toutes ensemble, c'était la saccade de 60-100 ms au
+       franchissement du seuil. Elles sont donc plafonnées par frame : la
+       réduction comble les trous restants et une frame suivante est
+       programmée jusqu'à résorption — l'image complète reste affichée en
+       continu, elle gagne juste sa pleine netteté sur quelques frames. */
+    bigView.seq = (bigView.seq || 0) + 1;
+    const visible = [];
+    let cold = 0;
     for (const t of bigView.tiles) {
       if (t.x + t.w < vx0 || t.x > vx1 || t.y + t.h < vy0 || t.y > vy1) continue;
-      ctx.drawImage(t.bmp, t.x, t.y);
+      if (t.seq !== bigView.seq - 1) cold += 1;
+      visible.push(t);
     }
+    let budget = 4; // tuiles froides par frame (~4 Mo chacune)
+    if (cold > budget && small) {
+      const k = image.naturalWidth / small.width;
+      ctx.drawImage(small, 0, 0, small.width, small.height,
+        0, 0, small.width * k, small.height * k);
+    }
+    let pending = false;
+    for (const t of visible) {
+      if (t.seq !== bigView.seq - 1) {
+        if (budget <= 0) {
+          pending = true;
+          continue;
+        }
+        budget -= 1;
+      }
+      ctx.drawImage(t.bmp, t.x, t.y);
+      t.seq = bigView.seq;
+    }
+    if (pending) bigViewSchedule();
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
