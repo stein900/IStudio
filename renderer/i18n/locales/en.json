@@ -377,6 +377,11 @@
  "Écraser remplace le fichier d’origine. La copie est créée à côté, l’original reste intact.": "Overwrite replaces the original file. The copy is created alongside it; the original stays intact.",
  "Épaisseur": "Thickness",
  "Étendue": "Spread",
+ "Contenu précédent (←)": "Previous item (←)",
+ "Contenu suivant (→)": "Next item (→)",
+ "Naviguer dans tout le contenu": "Browse all content",
+ "Naviguer seulement entre les images": "Browse images only",
+ "Naviguer seulement entre les vidéos": "Browse videos only",
  "{n} images non affichées": "{n} images not shown",
  "{n} précédentes": "{n} previous",
  "{n} suivantes": "{n} next"
