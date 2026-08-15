@@ -1,2 +1,4 @@
 node_modules/
 dist/
+bench/
+very_high_pic_resolution.png
