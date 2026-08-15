@@ -637,6 +637,13 @@ image.addEventListener('load', () => {
     pendingUpscaleOpen = false;
     openUpscale();
   }
+  // arrivée depuis une carte de module de l'accueil (« Convertir une image »…)
+  // — voir la section « Modules optionnels » en fin de fichier
+  if (pendingModuleOpen) {
+    const openModule = pendingModuleOpen;
+    pendingModuleOpen = null;
+    openModule();
+  }
 });
 
 image.addEventListener('error', async () => {
@@ -660,6 +667,7 @@ image.addEventListener('error', async () => {
     }
   }
   pendingUpscaleOpen = false; // image illisible : pas d'upscale automatique
+  pendingModuleOpen = null; // ni d'ouverture automatique d'un module
   image.hidden = true;
   updateBackdrop();
   hideResBadge();
@@ -4323,12 +4331,36 @@ document.addEventListener('pointerdown', (e) => {
    et sa popup ; l'hôte ne lui fournit que quelques accès. Retirer le
    bloc d'un module suffit à le débrancher (voir son README). */
 
+/* Ouverture depuis l'accueil : un module peut demander à s'ouvrir dès que
+   l'image choisie est affichée (même principe que pendingUpscaleOpen).
+   Consommé dans le gestionnaire « load » de l'image, purgé sur « error ». */
+let pendingModuleOpen = null;
+
 // Module Export SVG (renderer/svg-export)
 if (window.SvgExport) {
   window.SvgExport.init({
     getFile: currentFile,
     decodeFile: decodeCurrentFile,
     canOpen: () => !cropMode && !editBusy && !image.hidden,
+  });
+}
+
+// Module Convertir (renderer/convert)
+if (window.ImageConvert) {
+  window.ImageConvert.init({
+    getFile: currentFile,
+    decodeFile: decodeCurrentFile,
+    canOpen: () => !cropMode && !editBusy && !image.hidden,
+    saveCopyBeside: (payload) => window.viewer.saveCopy(payload),
+    refreshAfterSave,
+    openFileThen: async (openModule) => {
+      const ctx = await window.viewer.pickFile();
+      if (!ctx) return;
+      const picked = ctx.files[ctx.index];
+      // une vidéo choisie s'affiche simplement, sans ouvrir le module
+      if (picked && !isVideoFile(picked)) pendingModuleOpen = openModule;
+      loadContext(ctx);
+    },
   });
 }
 

@@ -1,0 +1,231 @@
+/* Module Convertir — styles de la popup (préfixe cvt-).
+   S'appuie sur les variables de thème de l'application (styles.css). */
+
+/* accueil épuré : comme les outils de l'hôte, le bouton attend une image */
+body.at-home #cvt-btn {
+  display: none !important;
+}
+
+#cvt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 62;
+  background: var(--backdrop);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#cvt-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 60px);
+  padding: 20px 22px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+}
+
+#cvt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+#cvt-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#cvt-title-wrap > svg {
+  color: var(--accent);
+}
+
+#cvt-title {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0.3px;
+}
+
+.cvt-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* --- Progression (indéterminée : les encodages sont brefs) --- */
+
+#cvt-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-input);
+  overflow: hidden;
+  margin: 18px 0 10px;
+}
+
+#cvt-progress-bar {
+  width: 40%;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  animation: cvt-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes cvt-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
+}
+
+#cvt-progress-label {
+  margin-bottom: 16px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+/* --- Réglages --- */
+
+.cvt-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.cvt-label {
+  flex: none;
+  width: 104px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+#cvt-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cvt-format {
+  height: 30px;
+  padding: 0 14px;
+  background: var(--btn-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.cvt-format:hover {
+  background: var(--bg-hover);
+}
+
+.cvt-format.is-selected {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+#cvt-quality {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+#cvt-quality-val {
+  min-width: 48px;
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+#cvt-note {
+  margin: 2px 0 12px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+/* --- Aperçu et statistiques --- */
+
+#cvt-preview-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  max-height: 300px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  /* damier clair : les zones transparentes du résultat restent lisibles */
+  background-image:
+    linear-gradient(45deg, #cbcbcb 25%, transparent 25%, transparent 75%, #cbcbcb 75%),
+    linear-gradient(45deg, #cbcbcb 25%, transparent 25%, transparent 75%, #cbcbcb 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+  background-color: #ffffff;
+}
+
+#cvt-preview {
+  max-width: 100%;
+  max-height: 300px;
+  display: block;
+  transition: opacity 0.15s ease;
+}
+
+/* ré-encodage en cours (changement de format ou de qualité) */
+#cvt-result.is-busy #cvt-preview {
+  opacity: 0.45;
+}
+
+#cvt-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+  margin: 0 0 12px;
+  font-size: 12.5px;
+}
+
+#cvt-stats dt {
+  color: var(--text-dim);
+}
+
+#cvt-stats dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Erreur --- */
+
+#cvt-error-text {
+  margin: 4px 0 16px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #ff8a8a;
+  background: rgba(255, 92, 92, 0.08);
+  border: 1px solid rgba(255, 92, 92, 0.3);
+  border-radius: 8px;
+}
+
+body.light #cvt-error-text {
+  color: #b02a2a;
+  background: rgba(214, 54, 54, 0.07);
+  border-color: rgba(214, 54, 54, 0.3);
+}
