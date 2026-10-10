@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('viewer', {
   bigviewMipCached: (filePath) => ipcRenderer.invoke('bigview-mip-cached', filePath),
   storeBigviewMip: (payload) => ipcRenderer.invoke('store-bigview-mip', payload),
   readFileHead: (filePath, bytes) => ipcRenderer.invoke('read-file-head', { filePath, bytes }),
+  readFileRange: (filePath, offset, bytes) => ipcRenderer.invoke('read-file-range', { filePath, offset, bytes }),
   statSizes: (paths) => ipcRenderer.invoke('stat-sizes', paths),
   statMany: (paths) => ipcRenderer.invoke('stat-many', paths),
   readFolderMeta: (filePath) => ipcRenderer.invoke('read-folder-meta', filePath),

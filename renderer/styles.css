@@ -474,13 +474,57 @@ body.at-home.pro #stage {
   padding: 0 8px;
 }
 
+#file-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 #file-name {
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* « Copier le chemin » : discret à côté du nom, coche accentuée une fois
+   le chemin copié (classe posée par renderer.js) */
+#toolbar #btn-copy-path {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--text-faint);
+}
+
+#toolbar #btn-copy-path svg {
+  width: 13px;
+  height: 13px;
+}
+
+#toolbar #btn-copy-path:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+#btn-copy-path .copy-path-done,
+#btn-copy-path.is-copied .copy-path-icon {
+  display: none;
+}
+
+#btn-copy-path.is-copied .copy-path-done {
+  display: block;
+}
+
+#toolbar #btn-copy-path.is-copied {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 #file-meta {
@@ -644,6 +688,62 @@ body.fullscreen #stage {
   transition: opacity 0.35s ease;
 }
 
+/* Confirmation « Chemin copié » : même verre que la pastille de définition,
+   centrée en haut de la scène. Le chemin est tronqué par le début (direction
+   rtl) : c'est la fin — dossier et nom du fichier — qui compte. */
+#copy-toast {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: min(720px, calc(100% - 200px));
+  padding: 7px 14px 7px 11px;
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(1.15);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -6px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+#copy-toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+#copy-toast svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+#copy-toast-label {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+#copy-toast-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* souris immobile ET loin de la barre pendant la lecture : le curseur
    s'efface à son tour (voir videoPokeCursor dans renderer.js) */
 body.video-idle #stage {
@@ -675,6 +775,8 @@ body.video-idle #stage {
   cursor: pointer;
   --p: 0; /* progression 0..1, posée par renderer.js */
   --b: 0; /* portion mise en tampon 0..1 */
+  --a: 0; /* boucle A–B : bornes 0..1 (section Boucle A–B de renderer.js) */
+  --bb: 1;
 }
 
 #video-seek-track {
@@ -728,6 +830,113 @@ body.video-idle #stage {
 #video-seek:hover #video-seek-handle,
 #video-seek.is-seeking #video-seek-handle {
   transform: translate(-50%, -50%) scale(1);
+}
+
+/* ---------- Boucle A–B ----------
+   Plage surlignée entre les deux bornes ; hors boucle, le rail est
+   légèrement voilé pour que la plage active ressorte. Les repères A et B
+   sont des drapeaux posés sur le rail, déplaçables au pointeur (Maj :
+   déplacement fin, molette : ±0,1 s) ; leur étiquette de temps n'apparaît
+   qu'au survol ou pendant le glisser. Tout est masqué tant que la boucle
+   A–B n'est pas active (#video-ui.has-ab). */
+
+#video-seek-ab {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: calc(var(--a) * 100%);
+  width: calc((var(--bb) - var(--a)) * 100%);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+  pointer-events: none;
+  display: none;
+}
+
+#video-ui.has-ab #video-seek-ab {
+  display: block;
+}
+
+#video-ui.has-ab #video-seek-fill {
+  opacity: 0.85;
+}
+
+.video-ab-marker {
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 26px;
+  margin-left: -11px;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  z-index: 2;
+  touch-action: none;
+  user-select: none;
+}
+
+#video-ui.has-ab .video-ab-marker {
+  display: flex;
+}
+
+#video-ab-a {
+  left: calc(var(--a) * 100%);
+}
+
+#video-ab-b {
+  left: calc(var(--bb) * 100%);
+}
+
+.video-ab-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.video-ab-marker:hover .video-ab-flag,
+.video-ab-marker.is-dragging .video-ab-flag {
+  transform: scale(1.18);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.video-ab-time {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(3px);
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(1.15);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.video-ab-marker:hover .video-ab-time,
+.video-ab-marker.is-dragging .video-ab-time {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 #video-controls {
@@ -861,6 +1070,16 @@ body.gallery-open .stage-nav {
 #video-ui.is-playing .vp-icon-play,
 #video-ui:not(.is-muted) .vp-icon-muted,
 #video-ui.is-muted .vp-icon-vol {
+  display: none;
+}
+
+/* lecture inversée : le triangle de lecture regarde vers la gauche */
+#video-ui.is-reverse .vp-icon-play {
+  transform: scaleX(-1);
+}
+
+/* boomerang : masqué tant que la durée est inconnue ou supérieure à 10 s */
+#video-ui:not(.can-boomerang) #video-boomerang {
   display: none;
 }
 
@@ -1933,6 +2152,7 @@ body.fullscreen #strip-toggle {
 .crop-grid {
   position: absolute;
   inset: 0;
+  border-radius: inherit; /* suit les coins arrondis de la sélection */
   background-image:
     linear-gradient(rgba(255, 255, 255, 0.3) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.3) 1px, transparent 1px);
@@ -1965,14 +2185,126 @@ body.fullscreen #strip-toggle {
   transform: translateX(-50%);
   bottom: 18px;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 10px;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(92vw, 880px);
+  padding: 10px 12px;
+  border-radius: 12px;
   border: 1px solid var(--border-strong);
   background: var(--glass);
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow);
+}
+
+.crop-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.crop-field {
+  min-width: 46px;
+  white-space: nowrap;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* Modèles de proportions */
+
+#crop-ratios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.crop-chip {
+  height: 25px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.crop-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.crop-chip.active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Coins arrondis */
+
+.crop-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 11px 0 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.crop-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.crop-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.crop-toggle.active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+#crop-radius {
+  width: 120px;
+}
+
+#crop-radius-val {
+  min-width: 34px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+#crop-radius:disabled + #crop-radius-val {
+  opacity: 0.45;
+}
+
+.crop-sep {
+  width: 1px;
+  height: 18px;
+  margin-left: auto;
+  background: var(--border-strong);
+}
+
+#crop-hint {
+  padding: 0 2px 1px;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-align: center;
 }
 
 #crop-size {

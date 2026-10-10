@@ -16,6 +16,7 @@ const counter = document.getElementById('counter');
 const zoomLabel = document.getElementById('zoom-label');
 const fileNameEl = document.getElementById('file-name');
 const fileMetaEl = document.getElementById('file-meta');
+const btnCopyPath = document.getElementById('btn-copy-path');
 const btnOpen = document.getElementById('btn-open');
 const btnPrev = document.getElementById('btn-prev');
 const btnNext = document.getElementById('btn-next');
@@ -40,6 +41,11 @@ const cropSelection = document.getElementById('crop-selection');
 const cropSizeEl = document.getElementById('crop-size');
 const cropApply = document.getElementById('crop-apply');
 const cropCancel = document.getElementById('crop-cancel');
+const cropRatios = document.getElementById('crop-ratios');
+const cropRound = document.getElementById('crop-round');
+const cropRadius = document.getElementById('crop-radius');
+const cropRadiusVal = document.getElementById('crop-radius-val');
+const cropHint = document.getElementById('crop-hint');
 const infoOverlay = document.getElementById('info-overlay');
 const infoBody = document.getElementById('info-body');
 const infoClose = document.getElementById('info-close');
@@ -63,6 +69,11 @@ let gridBackdrop = localStorage.getItem('gridBackdrop') !== 'false'; // fond de 
 let isFullscreen = false;
 let cropMode = false;
 let cropSel = { x: 0, y: 0, w: 0, h: 0 }; // en pixels affichés, relatif à #crop-area
+let cropRatio = null; // proportions verrouillées (largeur / hauteur), null = libre
+let cropRatioKey = 'free'; // modèle actif (clé du chip)
+let cropRoundOn = false; // bouton « Arrondi » : réglage des coins actif
+let cropCorner = 0; // arrondi des coins, en % de la moitié du petit côté (0 = angles droits)
+let cropCornerLast = 12; // dernier rayon choisi, restitué en réactivant l'arrondi
 
 /* ---------- Formatage ---------- */
 
@@ -480,6 +491,7 @@ function updateFileMeta() {
   if (videoActive && videoEl.videoWidth) {
     parts.push(`${videoEl.videoWidth} × ${videoEl.videoHeight} px`);
     if (Number.isFinite(videoEl.duration)) parts.push(formatTime(videoEl.duration));
+    if (videoProbe?.video?.fps) parts.push(tr('{n} i/s', { n: formatFps(videoProbe.video.fps) }));
   } else if (image.naturalWidth && image.naturalHeight && !image.hidden) {
     parts.push(`${image.naturalWidth} × ${image.naturalHeight} px`);
   }
@@ -553,6 +565,42 @@ function hideResBadge() {
   resBadge.style.opacity = '0';
 }
 
+/* ---------- Copier le chemin ----------
+   Bouton à droite du nom du fichier (barre d'outils) et raccourci
+   Ctrl+Maj+C : le chemin complet de l'image ou de la vidéo courante part
+   dans le presse-papiers. Double confirmation : l'icône du bouton devient
+   une coche, et une pastille en haut de la scène rappelle le chemin
+   copié — visible aussi en plein écran, où la barre d'outils a disparu. */
+
+const copyToast = document.getElementById('copy-toast');
+const copyToastLabel = document.getElementById('copy-toast-label');
+const copyToastPath = document.getElementById('copy-toast-path');
+let copyPathTimer = null;
+
+async function copyCurrentPath() {
+  const file = currentFile();
+  if (!file || !file.path) return;
+  try {
+    await navigator.clipboard.writeText(file.path);
+  } catch {
+    return; // presse-papiers indisponible
+  }
+  btnCopyPath.classList.add('is-copied');
+  copyToastLabel.textContent = tr('Chemin copié');
+  // marques LRM : le chemin reste lu de gauche à droite dans la zone rtl
+  // qui le tronque par le début (voir #copy-toast-path dans styles.css)
+  copyToastPath.textContent = `‎${file.path}‎`;
+  copyToast.classList.add('is-visible');
+  if (copyPathTimer) clearTimeout(copyPathTimer);
+  copyPathTimer = setTimeout(() => {
+    copyPathTimer = null;
+    btnCopyPath.classList.remove('is-copied');
+    copyToast.classList.remove('is-visible');
+  }, 2200);
+}
+
+btnCopyPath.addEventListener('click', copyCurrentPath);
+
 function render() {
   const file = currentFile();
   const hasFile = Boolean(file);
@@ -575,7 +623,7 @@ function render() {
   navSyncControls(); // précédent/suivant, barre vidéo et flèches de la scène
   // .module-btn : boutons injectés par les modules optionnels (voir la
   // section « Modules optionnels » en fin de fichier) — même cycle de vie
-  for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnUpscale, btnPaint, btnStudio, btnOcr, btnInfo, btnPrint, btnDelete, btnGallery, ...document.querySelectorAll('#toolbar .module-btn')]) {
+  for (const b of [btnZoomIn, btnZoomOut, btnFit, btnRotate, btnCrop, btnUpscale, btnPaint, btnStudio, btnOcr, btnInfo, btnPrint, btnDelete, btnGallery, btnCopyPath, ...document.querySelectorAll('#toolbar .module-btn')]) {
     b.disabled = disable;
   }
   // vidéo : les outils d'image n'ont pas de sens — sauf le zoom (la vidéo
@@ -598,6 +646,7 @@ function render() {
       ? 'Modifier la vidéo dans VStudio (montage)'
       : 'Ouvrir dans Studio (montage : calques, lasso, retouche)'
   );
+  setButtonTitle(btnInfo, isVid ? 'Informations sur la vidéo (I)' : "Informations sur l'image (I)");
 
   // la galerie suit l'état du dossier : reconstruction seulement si la
   // liste a changé (suppression, onglet, tri Pro) — une simple navigation
@@ -1587,7 +1636,7 @@ function moveGalleryCursor(delta) {
 function openGallery() {
   if (galleryOpen || !state.files.length || Paint.isOpen() || studioIsOpen()) return;
   if (cropMode) exitCrop();
-  if (videoActive) videoEl.pause(); // la grille recouvre la scène : silence
+  if (videoActive) videoPause(); // la grille recouvre la scène : silence
   galleryOpen = true;
   galleryEl.hidden = false;
   btnGallery.classList.add('active');
@@ -1743,14 +1792,150 @@ function layoutCropArea() {
   cropArea.style.top = `${(stage.clientHeight - h) / 2}px`;
 }
 
+const CROP_MIN = 8; // côté minimal d'une sélection, en pixels affichés
+
+/* Rayon des coins arrondis, exprimé dans le repère du rectangle fourni
+   (affichage pour l'aperçu, pixels image pour l'export). 50 % = demi-cercle. */
+function cornerRadiusOf(w, h) {
+  return cropCorner > 0 ? (cropCorner / 100) * Math.min(w, h) : 0;
+}
+
+/* Rectangle de découpe final, en pixels entiers de l'image. Sous contrainte de
+   format, les dimensions sont ajustées d'un pixel au plus pour que la sortie
+   respecte exactement le modèle choisi (16:9 → 1920 × 1080, pas 1920 × 1081). */
+function cropRectPx() {
+  const { w: dispW, h: dispH } = cropDisplaySize();
+  if (!(dispW > 0 && dispH > 0)) return null;
+  const fx = image.naturalWidth / dispW;
+  const fy = image.naturalHeight / dispH;
+  const rect = {
+    x: Math.max(0, Math.round(cropSel.x * fx)),
+    y: Math.max(0, Math.round(cropSel.y * fy)),
+    w: Math.max(1, Math.round(cropSel.w * fx)),
+    h: Math.max(1, Math.round(cropSel.h * fy)),
+  };
+  rect.w = Math.min(rect.w, image.naturalWidth - rect.x);
+  rect.h = Math.min(rect.h, image.naturalHeight - rect.y);
+  if (cropRatio) {
+    const availW = image.naturalWidth - rect.x;
+    const availH = image.naturalHeight - rect.y;
+    const fits = [
+      { w: rect.w, h: Math.round(rect.w / cropRatio) },
+      { w: Math.round(rect.h * cropRatio), h: rect.h },
+    ].filter((c) => c.w >= 1 && c.h >= 1 && c.w <= availW && c.h <= availH);
+    if (fits.length) {
+      const best = fits.reduce((a, b) =>
+        Math.abs(a.w / a.h - cropRatio) <= Math.abs(b.w / b.h - cropRatio) ? a : b
+      );
+      rect.w = best.w;
+      rect.h = best.h;
+    }
+  }
+  return rect;
+}
+
 function layoutCropSelection() {
   cropSelection.style.left = `${cropSel.x}px`;
   cropSelection.style.top = `${cropSel.y}px`;
   cropSelection.style.width = `${cropSel.w}px`;
   cropSelection.style.height = `${cropSel.h}px`;
-  const { w } = cropDisplaySize();
-  const scale = w > 0 ? image.naturalWidth / w : 1;
-  cropSizeEl.textContent = `${Math.max(1, Math.round(cropSel.w * scale))} × ${Math.max(1, Math.round(cropSel.h * scale))} px`;
+  const radius = cornerRadiusOf(cropSel.w, cropSel.h);
+  cropSelection.style.borderRadius = radius > 0 ? `${radius}px` : '';
+  const rect = cropRectPx();
+  cropSizeEl.textContent = rect ? `${rect.w} × ${rect.h} px` : '–';
+}
+
+/* ----- Modèles de proportions ----- */
+
+/** Proportions (largeur / hauteur) d'un modèle ; null pour « Libre ». */
+function ratioOfKey(key) {
+  if (key === 'free') return null;
+  if (key === 'orig') {
+    return image.naturalWidth > 0 && image.naturalHeight > 0
+      ? image.naturalWidth / image.naturalHeight
+      : null;
+  }
+  const [a, b] = key.split(':').map(Number);
+  return a > 0 && b > 0 ? a / b : null;
+}
+
+/* Remet la sélection au format demandé : surface conservée, même centre,
+   puis réduction si le rectangle déborde de l'image. */
+function fitSelToRatio(r) {
+  const { w: aw, h: ah } = cropDisplaySize();
+  if (!(aw > 0 && ah > 0)) return;
+  const cx = cropSel.x + cropSel.w / 2;
+  const cy = cropSel.y + cropSel.h / 2;
+  let w = Math.sqrt(Math.max(cropSel.w * cropSel.h, CROP_MIN * CROP_MIN) * r);
+  let h = w / r;
+  const k = Math.min(1, aw / w, ah / h);
+  w *= k;
+  h *= k;
+  cropSel = {
+    x: Math.min(Math.max(cx - w / 2, 0), aw - w),
+    y: Math.min(Math.max(cy - h / 2, 0), ah - h),
+    w,
+    h,
+  };
+}
+
+function setCropRatio(key) {
+  cropRatioKey = key;
+  cropRatio = ratioOfKey(key);
+  for (const chip of cropRatios.querySelectorAll('.crop-chip')) {
+    chip.classList.toggle('active', chip.dataset.ratio === key);
+  }
+  if (cropRatio && cropMode) {
+    fitSelToRatio(cropRatio);
+    layoutCropSelection();
+  }
+}
+
+/* Contrainte de proportions pendant un redimensionnement : le point opposé à
+   la poignée reste fixe (les poignées de côté travaillent autour du centre de
+   leur arête), et le rectangle ne peut pas sortir de l'image. */
+function ratioResize(s, mode, raw, aw, ah) {
+  const r = cropRatio;
+  const west = mode.includes('w');
+  const east = mode.includes('e');
+  const north = mode.includes('n');
+  const south = mode.includes('s');
+  const cx = s.x + s.w / 2;
+  const cy = s.y + s.h / 2;
+
+  let w;
+  if (mode === 'n' || mode === 's') w = raw.h * r;
+  else if (mode === 'e' || mode === 'w') w = raw.w;
+  else w = Math.max(raw.w, raw.h * r); // coin : la plus grande des deux courses
+
+  const maxW = east ? aw - s.x : west ? s.x + s.w : 2 * Math.min(cx, aw - cx);
+  const maxH = south ? ah - s.y : north ? s.y + s.h : 2 * Math.min(cy, ah - cy);
+  w = Math.min(w, maxW, maxH * r);
+  w = Math.max(w, CROP_MIN, CROP_MIN * r);
+  const h = w / r;
+
+  return {
+    x: east ? s.x : west ? s.x + s.w - w : cx - w / 2,
+    y: south ? s.y : north ? s.y + s.h - h : cy - h / 2,
+    w,
+    h,
+  };
+}
+
+/* ----- Coins arrondis ----- */
+
+/** Vrai si l'arrondi imposera un ré-encodage PNG (le JPEG n'a pas d'alpha). */
+function cropNeedsPng() {
+  const file = currentFile();
+  return Boolean(file) && encodeTarget(extOf(file.name)).mime === 'image/jpeg';
+}
+
+function syncCropRound() {
+  cropRound.classList.toggle('active', cropRoundOn);
+  cropRadius.disabled = !cropRoundOn;
+  cropRadius.value = String(cropCorner);
+  cropRadiusVal.textContent = `${cropCorner} %`;
+  cropHint.hidden = !(cropCorner > 0 && cropNeedsPng());
 }
 
 function enterCrop() {
@@ -1763,7 +1948,9 @@ function enterCrop() {
   layoutCropArea();
   const { w, h } = cropDisplaySize();
   cropSel = { x: w * 0.125, y: h * 0.125, w: w * 0.75, h: h * 0.75 };
+  setCropRatio(cropRatioKey); // « Original » dépend de l'image affichée
   layoutCropSelection();
+  syncCropRound();
   cropLayer.hidden = false;
   stageNavSync(); // les flèches de la scène s'effacent pendant le rognage
 }
@@ -2014,8 +2201,11 @@ async function decodeCurrentFile(file) {
   return loadImageFromBlob(blob);
 }
 
-async function saveCanvasInPlace(canvas, file) {
-  const target = encodeTarget(extOf(file.name));
+async function saveCanvasInPlace(canvas, file, opts) {
+  let target = encodeTarget(extOf(file.name));
+  if (opts && opts.keepAlpha && target.mime === 'image/jpeg') {
+    target = { outExt: 'png', mime: 'image/png' }; // le JPEG ne garde pas la transparence
+  }
   const outBlob = await new Promise((resolve) => canvas.toBlob(resolve, target.mime, 0.95));
   if (!outBlob) return null;
   const outData = new Uint8Array(await outBlob.arrayBuffer());
@@ -2101,22 +2291,25 @@ async function rotate(quarterTurns) {
   }
 }
 
+/* Tracé d'un rectangle à coins arrondis (découpe de l'export). */
+function roundedRectPath(ctx, x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+
 async function applyCrop() {
   const file = currentFile();
   if (!file || !cropMode || editBusy) return;
 
-  const { w: dispW, h: dispH } = cropDisplaySize();
-  if (dispW <= 0 || dispH <= 0) return;
-  const fx = image.naturalWidth / dispW;
-  const fy = image.naturalHeight / dispH;
-  const rect = {
-    x: Math.max(0, Math.round(cropSel.x * fx)),
-    y: Math.max(0, Math.round(cropSel.y * fy)),
-    w: Math.max(1, Math.round(cropSel.w * fx)),
-    h: Math.max(1, Math.round(cropSel.h * fy)),
-  };
-  rect.w = Math.min(rect.w, image.naturalWidth - rect.x);
-  rect.h = Math.min(rect.h, image.naturalHeight - rect.y);
+  const rect = cropRectPx();
+  if (!rect) return;
+  const radius = cornerRadiusOf(rect.w, rect.h);
 
   editBusy = true;
   cropApply.disabled = true;
@@ -2128,10 +2321,16 @@ async function applyCrop() {
     canvas.width = rect.w;
     canvas.height = rect.h;
     const ctx = canvas.getContext('2d');
+    if (radius > 0) {
+      ctx.save();
+      roundedRectPath(ctx, 0, 0, rect.w, rect.h, radius);
+      ctx.clip();
+    }
     ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    if (radius > 0) ctx.restore();
     URL.revokeObjectURL(url);
 
-    const savedPath = await saveCanvasInPlace(canvas, file);
+    const savedPath = await saveCanvasInPlace(canvas, file, { keepAlpha: radius > 0 });
     if (savedPath) {
       exitCrop();
       await refreshAfterSave(savedPath, file);
@@ -2153,6 +2352,35 @@ btnCrop.addEventListener('click', () => {
 });
 cropApply.addEventListener('click', applyCrop);
 cropCancel.addEventListener('click', exitCrop);
+
+/* Modèles de proportions : 1:1, 16:9, 9:16… (« Libre » déverrouille). */
+cropRatios.addEventListener('click', (e) => {
+  const chip = e.target.closest('.crop-chip');
+  if (!chip) return;
+  setCropRatio(chip.dataset.ratio);
+  chip.blur(); // Entrée doit valider le rognage, pas re-cliquer le modèle
+});
+
+/* Bouton « Arrondi » : active le réglage des coins (rayon réglable au curseur). */
+cropRound.addEventListener('click', () => {
+  cropRoundOn = !cropRoundOn;
+  if (cropRoundOn) {
+    cropCorner = cropCornerLast > 0 ? cropCornerLast : 12;
+  } else {
+    if (cropCorner > 0) cropCornerLast = cropCorner;
+    cropCorner = 0;
+  }
+  syncCropRound();
+  layoutCropSelection();
+  cropRound.blur();
+});
+
+cropRadius.addEventListener('input', () => {
+  cropCorner = Math.min(50, Math.max(0, Number(cropRadius.value) || 0));
+  if (cropCorner > 0) cropCornerLast = cropCorner;
+  syncCropRound();
+  layoutCropSelection();
+});
 
 /* Interactions de la sélection de rognage. */
 let cropDrag = null;
@@ -2192,10 +2420,22 @@ window.addEventListener('mousemove', (e) => {
     cropSel.x = Math.min(Math.max(s.x + dx, 0), aw - s.w);
     cropSel.y = Math.min(Math.max(s.y + dy, 0), ah - s.h);
   } else if (cropDrag.mode === 'new') {
-    cropSel.x = Math.min(cropDrag.startX, px);
-    cropSel.y = Math.min(cropDrag.startY, py);
-    cropSel.w = Math.abs(px - cropDrag.startX);
-    cropSel.h = Math.abs(py - cropDrag.startY);
+    let w = Math.abs(px - cropDrag.startX);
+    let h = Math.abs(py - cropDrag.startY);
+    let x = Math.min(cropDrag.startX, px);
+    let y = Math.min(cropDrag.startY, py);
+    if (cropRatio) {
+      // le point de départ reste fixe, le rectangle grandit au format voulu
+      const right = px >= cropDrag.startX;
+      const down = py >= cropDrag.startY;
+      const maxW = right ? aw - cropDrag.startX : cropDrag.startX;
+      const maxH = down ? ah - cropDrag.startY : cropDrag.startY;
+      w = Math.min(Math.max(w, h * cropRatio), maxW, maxH * cropRatio);
+      h = w / cropRatio;
+      x = right ? cropDrag.startX : cropDrag.startX - w;
+      y = down ? cropDrag.startY : cropDrag.startY - h;
+    }
+    cropSel = { x, y, w, h };
   } else {
     let { x, y, w, h } = s;
     const m = cropDrag.mode;
@@ -2215,7 +2455,7 @@ window.addEventListener('mousemove', (e) => {
     if (m.includes('s')) {
       h = Math.min(Math.max(s.h + dy, MIN), ah - s.y);
     }
-    cropSel = { x, y, w, h };
+    cropSel = cropRatio ? ratioResize(s, m, { x, y, w, h }, aw, ah) : { x, y, w, h };
   }
   layoutCropSelection();
 });
@@ -2272,12 +2512,12 @@ function showInfo() {
   infoBody.append(infoSection(videoActive ? 'Vidéo' : 'Image'));
   if (w && h && (videoActive || !image.hidden)) {
     infoBody.append(infoRow('Dimensions', tr('{w} × {h} pixels', { w, h })));
-    if (videoActive && Number.isFinite(videoEl.duration)) {
-      infoBody.append(infoRow('Durée', formatTime(videoEl.duration)));
-    } else if (!videoActive) {
+    if (videoActive) {
+      infoAppendVideoRows(w, h);
+    } else {
       infoBody.append(infoRow('Définition', tr('{n} mégapixels', { n: ((w * h) / 1e6).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) })));
+      infoBody.append(infoRow('Rapport d’aspect', aspectRatio(w, h)));
     }
-    infoBody.append(infoRow('Rapport d’aspect', aspectRatio(w, h)));
   } else {
     infoBody.append(infoRow('Dimensions', '–'));
   }
@@ -2291,6 +2531,52 @@ function showInfo() {
   infoBody.append(infoRow('Position', tr('{a} sur {b}', { a: state.index + 1, b: state.files.length })));
 
   infoOverlay.hidden = false;
+}
+
+/* Lignes propres à une vidéo : ce que révèle la balise (durée, définition)
+   complété par la sonde de conteneur (codecs, fréquence d'images, audio —
+   voir videoProbe). Tant que la sonde n'a pas répondu, ou si le conteneur
+   lui est inconnu, les valeurs manquantes s'affichent « – ». */
+function infoAppendVideoRows(w, h) {
+  const d = videoEl.duration;
+  const v = videoProbe?.video;
+  const a = videoProbe?.audio;
+  infoBody.append(infoRow('Classe de définition', resolutionLabel(w, h)));
+  infoBody.append(infoRow('Rapport d’aspect', aspectRatio(w, h)));
+  infoBody.append(infoRow('Durée', Number.isFinite(d) ? formatTimePrecise(d) : '–'));
+  infoBody.append(infoRow('Fréquence d’images', v?.fps ? tr('{n} images par seconde', { n: formatFps(v.fps) }) : '–'));
+  if (v?.frames) infoBody.append(infoRow('Nombre d’images', v.frames.toLocaleString('fr-FR')));
+  infoBody.append(infoRow('Codec vidéo', v ? (v.profile ? `${v.codec} (${v.profile})` : v.codec) : '–'));
+  infoBody.append(infoRow('Conteneur', videoProbe ? videoProbe.container : '–'));
+  if (state.stat && Number.isFinite(d) && d > 0) {
+    infoBody.append(infoRow('Débit moyen', formatBitrate((state.stat.size * 8) / d)));
+  }
+
+  infoBody.append(infoSection('Audio'));
+  if (!videoProbe) {
+    infoBody.append(infoRow('Piste', '–'));
+  } else if (!a) {
+    infoBody.append(infoRow('Piste', tr('Aucune piste audio')));
+  } else {
+    infoBody.append(infoRow('Codec audio', a.codec));
+    infoBody.append(infoRow('Canaux', audioChannelsLabel(a.channels)));
+    infoBody.append(infoRow('Échantillonnage', a.sampleRate ? `${(a.sampleRate / 1000).toLocaleString('fr-FR')} kHz` : '–'));
+    if (videoProbe.audioCount > 1) infoBody.append(infoRow('Pistes audio', String(videoProbe.audioCount)));
+  }
+}
+
+function audioChannelsLabel(n) {
+  if (!n) return '–';
+  if (n === 1) return tr('Mono');
+  if (n === 2) return tr('Stéréo');
+  if (n === 6) return '5.1';
+  if (n === 8) return '7.1';
+  return tr('{n} canaux', { n });
+}
+
+function formatBitrate(bps) {
+  if (bps >= 1e6) return `${(bps / 1e6).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} Mb/s`;
+  return `${Math.round(bps / 1e3).toLocaleString('fr-FR')} kb/s`;
 }
 
 function hideInfo() {
@@ -3352,7 +3638,10 @@ window.addEventListener('keydown', (e) => {
   }
   if (cropMode) {
     if (e.key === 'Escape') exitCrop();
-    if (e.key === 'Enter') applyCrop();
+    if (e.key === 'Enter') {
+      e.preventDefault(); // sinon un bouton de la barre ayant le focus se déclenche aussi
+      applyCrop();
+    }
     return;
   }
   // mode Pro : notes (1-5, 0), drapeaux (P/X/U), grille (G), verrou (K), mesure (M)
@@ -3375,8 +3664,10 @@ window.addEventListener('keydown', (e) => {
   }
   // Lecteur vidéo : Espace lecture/pause, ←/→ ±5 s (Maj : ±10 s), ↑/↓
   // volume (jusqu'à 200 %), +/− vitesse de lecture, Début reprend du
-  // départ, L boucle, M muet. La navigation entre fichiers passe alors
-  // par PgPréc/PgSuiv (ou les flèches de la barre).
+  // départ, L boucle, Maj+L boucle A–B, A / B posent les bornes A–B à
+  // l'instant courant, R lecture inversée, O boomerang (vidéos ≤ 10 s),
+  // M muet. La navigation entre fichiers passe alors par PgPréc/PgSuiv
+  // (ou les flèches de la barre).
   if (videoActive && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (e.key === 'Escape' && !videoRateMenu.hidden) {
       videoRateMenuShow(false);
@@ -3415,7 +3706,24 @@ window.addEventListener('keydown', (e) => {
         return;
       case 'l':
       case 'L':
-        videoSetLoop(!videoLoop);
+        if (e.shiftKey) videoAbToggle();
+        else videoSetLoop(!videoLoop);
+        return;
+      case 'a':
+      case 'A':
+        videoAbMark('a');
+        return;
+      case 'b':
+      case 'B':
+        videoAbMark('b');
+        return;
+      case 'r':
+      case 'R':
+        videoSetReverse(!videoReverse);
+        return;
+      case 'o':
+      case 'O':
+        if (videoBoomAllowed()) videoSetBoomerang(!videoBoomerang);
         return;
       case 'm':
       case 'M':
@@ -3431,6 +3739,11 @@ window.addEventListener('keydown', (e) => {
         videoResetZoom(); // retour à l'ajusté, comme 0 sur une image
         return;
     }
+  }
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') {
+    e.preventDefault();
+    copyCurrentPath();
+    return;
   }
   if (e.ctrlKey && e.key.toLowerCase() === 'o') {
     e.preventDefault();
@@ -3540,9 +3853,14 @@ window.addEventListener('drop', (e) => e.preventDefault());
    embarqué : aucune dépendance, aucun surpoids). La vidéo remplace l'image
    dans la scène — zoomable à la molette et déplaçable au glisser, comme une
    image ; une barre de contrôles flottante (vidéo précédente/suivante,
-   lecture/pause, ±5 s, ±10 s, retour au début, boucle, volume, barre de
-   progression) s'efface quand la souris s'en éloigne — lecture en cours ou
-   en pause — et réapparaît dès qu'elle s'en approche. */
+   lecture/pause, ±5 s, ±10 s, retour au début, boucle, boucle A–B, lecture
+   inversée, boomerang (vidéos de 10 s ou moins), vitesse, volume, barre de
+   progression) s'efface quand la souris
+   s'en éloigne — lecture en cours ou en pause — et réapparaît dès qu'elle
+   s'en approche. Deux moteurs de lecture cohabitent : la lecture native de
+   la balise (sens normal) et la lecture inversée (section dédiée), qui
+   pilote currentTime elle-même ; toutes les commandes passent par
+   videoPlay / videoPause / videoIsPlaying pour l'ignorer. */
 
 const videoEl = document.getElementById('video');
 const videoUi = document.getElementById('video-ui');
@@ -3558,6 +3876,13 @@ const videoRateBtn = document.getElementById('video-rate');
 const videoRateMenu = document.getElementById('video-rate-menu');
 const videoPrevBtn = document.getElementById('video-prev');
 const videoNextBtn = document.getElementById('video-next');
+const videoAbBtn = document.getElementById('video-ab');
+const videoReverseBtn = document.getElementById('video-reverse');
+const videoBoomBtn = document.getElementById('video-boomerang');
+const videoAbMarkers = {
+  a: document.getElementById('video-ab-a'),
+  b: document.getElementById('video-ab-b'),
+};
 
 const VIDEO_EXT_SET = new Set(['mp4', 'm4v', 'mkv', 'mov', 'webm']);
 
@@ -3582,6 +3907,14 @@ function formatTime(s) {
   const m = Math.floor((s % 3600) / 60);
   const sec = String(s % 60).padStart(2, '0');
   return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
+/** Même forme avec les centièmes (« 1:02.35 ») : bornes A–B, durée exacte. */
+function formatTimePrecise(s) {
+  if (!Number.isFinite(s) || s < 0) s = 0;
+  const whole = Math.floor(s);
+  const cents = String(Math.floor((s - whole) * 100)).padStart(2, '0');
+  return `${formatTime(whole)}.${cents}`;
 }
 
 let videoActive = false;
@@ -3673,8 +4006,7 @@ function videoSyncTime() {
 }
 
 function videoSyncPlayState() {
-  const playing = videoActive && !videoEl.paused && !videoEl.ended;
-  videoUi.classList.toggle('is-playing', playing);
+  videoUi.classList.toggle('is-playing', videoIsPlaying());
   if (videoLastMouse) videoUpdateProximity(videoLastMouse.x, videoLastMouse.y);
   // sans mouvement de souris connu : la barre reste visible jusqu'au
   // premier déplacement, qui prend alors le relais
@@ -3717,7 +4049,7 @@ function videoProximityAt(x, y) {
 
 function videoUpdateProximity(x, y) {
   if (!videoActive) return;
-  if (videoSeekDrag || !videoRateMenu.hidden) {
+  if (videoSeekDrag || videoAbDrag || !videoRateMenu.hidden) {
     videoApplyBarOpacity(1);
     return;
   }
@@ -3731,7 +4063,7 @@ function videoPokeCursor() {
   if (videoCursorTimer) clearTimeout(videoCursorTimer);
   videoCursorTimer = setTimeout(() => {
     videoCursorTimer = null;
-    if (videoActive && !videoEl.paused && !videoEl.ended && videoBarOpacity <= 0.05) {
+    if (videoIsPlaying() && videoBarOpacity <= 0.05) {
       document.body.classList.add('video-idle');
     }
   }, 2500);
@@ -3741,7 +4073,6 @@ function showVideo(file) {
   videoActive = true;
   videoEl.hidden = false;
   videoUi.hidden = false;
-  videoEl.loop = videoLoop;
   videoEl.playbackRate = videoRate;
   if (videoEl.src !== file.url) {
     holdThumbs(); // priorité réseau/décodage à la vidéo principale
@@ -3752,11 +4083,20 @@ function showVideo(file) {
     videoLastMouse = null; // nouvelle vidéo : barre visible jusqu'au 1er geste
     videoApplyBarOpacity(1);
     videoResetZoom(); // chaque vidéo s'ouvre ajustée
+    // la vidéo précédente s'arrête (moteur inversé compris) ; bornes A–B,
+    // sens de lecture et boomerang sont propres à chaque vidéo
+    videoPause();
+    videoSetReverse(false);
+    videoSetBoomerang(false);
+    videoAbClear();
+    videoProbeLoad(file); // codecs, fps… (barre d'outils et popup d'informations)
     hideResBadge(); // la pastille attend les dimensions (loadedmetadata)
     videoEl.src = file.url;
     const p = videoEl.play(); // lecture immédiate, fluide dès l'ouverture
     if (p) p.catch(() => {});
   }
+  videoSyncNativeLoop();
+  videoBoomSyncUi();
   videoApplyTransform(); // libellé de zoom et curseur de pan à jour
   videoPrevBtn.disabled = !navHasTarget();
   videoNextBtn.disabled = !navHasTarget();
@@ -3765,8 +4105,13 @@ function showVideo(file) {
 
 function hideVideo() {
   if (!videoActive && videoEl.hidden) return;
+  videoPause(); // moteur inversé compris
   videoActive = false;
-  videoEl.pause();
+  videoSetReverse(false);
+  videoSetBoomerang(false);
+  videoAbClear();
+  videoBoomSyncUi();
+  videoProbe = null;
   videoEl.removeAttribute('src');
   videoEl.load(); // libère le décodeur et referme le fichier
   videoEl.hidden = true;
@@ -3785,14 +4130,32 @@ function hideVideo() {
 
 /* --- Commandes --- */
 
+/** Lecture en cours, quel que soit le moteur (natif ou inversé). */
+function videoIsPlaying() {
+  if (!videoActive) return false;
+  return videoReverse ? videoRevPlaying : !videoEl.paused && !videoEl.ended;
+}
+
+function videoPlay() {
+  if (!videoActive) return;
+  if (videoReverse) {
+    videoRevStart();
+    return;
+  }
+  if (videoEl.ended) videoEl.currentTime = videoAb.active ? videoAb.a : 0;
+  const p = videoEl.play();
+  if (p) p.catch(() => {});
+}
+
+function videoPause() {
+  if (videoReverse) videoRevStop();
+  else videoEl.pause();
+}
+
 function videoTogglePlay() {
   if (!videoActive) return;
-  if (videoEl.paused || videoEl.ended) {
-    const p = videoEl.play();
-    if (p) p.catch(() => {});
-  } else {
-    videoEl.pause();
-  }
+  if (videoIsPlaying()) videoPause();
+  else videoPlay();
 }
 
 function videoSeekBy(delta) {
@@ -3804,16 +4167,27 @@ function videoSeekBy(delta) {
   videoSyncTime();
 }
 
+/* Retour au début — celui de la boucle A–B quand elle est active.
+   En boomerang, on reprend l'aller (sens normal) depuis ce début. */
 function videoRestart() {
   if (!videoActive) return;
-  videoEl.currentTime = 0;
+  if (videoBoomerang && videoReverse) videoSetReverse(false);
+  videoEl.currentTime = videoAb.active ? videoAb.a : 0;
   videoSyncTime();
 }
 
 function videoSetLoop(on) {
   videoLoop = on;
-  videoEl.loop = on;
   videoLoopBtn.classList.toggle('active', on);
+  videoSyncNativeLoop();
+}
+
+/* La boucle native de la balise ne sert qu'en lecture normale sans bornes :
+   avec une boucle A–B, le retour en A est assuré par videoAbWatch et
+   l'événement ended ; en lecture inversée, par le moteur inversé ; en
+   boomerang, le rebond bascule le sens au lieu de relancer depuis le début. */
+function videoSyncNativeLoop() {
+  videoEl.loop = videoLoop && !videoAb.active && !videoBoomerang;
 }
 
 function videoToggleMute() {
@@ -3897,17 +4271,342 @@ async function openVideoInVStudio(module) {
   // sinon : le process main a proposé de télécharger VStudio (dialogue natif)
 }
 
+/* --- Boucle A–B ----------------------------------------------------------
+   Deux bornes posées sur la barre de progression délimitent une plage lue
+   en boucle, propre à chaque vidéo. Activation : bouton A–B ou Maj+L
+   (plage de 10 s à partir de l'instant courant), ou directement A / B au
+   clavier, qui posent une borne à l'instant courant. Réglage fin : glisser
+   un repère — l'image correspondante s'affiche pendant le glisser, Maj
+   ralentit le déplacement ×10 — ou molette sur un repère (±0,1 s, Maj :
+   ±1 s). Le retour en A à l'atteinte de B est vérifié image par image
+   (requestVideoFrameCallback), bien plus fin que timeupdate (~4 Hz). */
+
+const VIDEO_AB_MIN_GAP = 0.2; // s : écart minimal entre A et B
+const VIDEO_AB_SPAN = 10; // s : longueur de la plage proposée à l'activation
+const VIDEO_AB_WHEEL_STEP = 0.1; // s par cran de molette (Maj : ×10)
+const VIDEO_AB_FINE_FACTOR = 0.1; // Maj pendant le glisser : déplacement ralenti
+
+const videoAb = { active: false, a: 0, b: 0 }; // bornes en secondes
+
+let videoAbDrag = null; // { point, lastX, wasPlaying } pendant le glisser d'un repère
+let videoAbWatchId = 0; // rappel image par image en cours (0 : aucun)
+
+function videoAbDuration() {
+  const d = videoEl.duration;
+  return Number.isFinite(d) && d > 0 ? d : 0;
+}
+
+function videoAbApplyUi() {
+  videoUi.classList.toggle('has-ab', videoAb.active);
+  videoAbBtn.classList.toggle('active', videoAb.active);
+  const d = videoAbDuration();
+  if (videoAb.active && d) {
+    videoSeek.style.setProperty('--a', String(videoAb.a / d));
+    videoSeek.style.setProperty('--bb', String(videoAb.b / d));
+    for (const point of ['a', 'b']) {
+      videoAbMarkers[point].querySelector('.video-ab-time').textContent = formatTimePrecise(videoAb[point]);
+    }
+  }
+  videoSyncNativeLoop();
+}
+
+/** Pose la plage [a, b] — ordonnée, bornée, écart minimal garanti — et active la boucle. */
+function videoAbApply(a, b) {
+  const d = videoAbDuration();
+  if (!videoActive || !d) return;
+  a = Math.min(Math.max(0, a), d);
+  b = Math.min(Math.max(0, b), d);
+  if (b - a < VIDEO_AB_MIN_GAP) {
+    b = Math.min(d, a + VIDEO_AB_MIN_GAP);
+    a = Math.max(0, b - VIDEO_AB_MIN_GAP);
+  }
+  videoAb.active = true;
+  videoAb.a = a;
+  videoAb.b = b;
+  videoAbApplyUi();
+  videoAbWatch();
+}
+
+/** Déplace une borne sans jamais croiser l'autre. */
+function videoAbSetPoint(point, t) {
+  if (!videoAb.active) return;
+  if (point === 'a') videoAbApply(Math.min(t, videoAb.b - VIDEO_AB_MIN_GAP), videoAb.b);
+  else videoAbApply(videoAb.a, Math.max(t, videoAb.a + VIDEO_AB_MIN_GAP));
+}
+
+/* Pose A ou B à l'instant courant. Active la boucle au passage ; si la
+   borne posée croise l'autre (ou que l'autre n'existe pas encore), celle-ci
+   est déduite pour former une plage de VIDEO_AB_SPAN secondes. */
+function videoAbMark(point) {
+  const d = videoAbDuration();
+  if (!videoActive || !d) return;
+  const t = videoEl.currentTime;
+  if (point === 'a') {
+    const keepB = videoAb.active && t + VIDEO_AB_MIN_GAP <= videoAb.b;
+    videoAbApply(t, keepB ? videoAb.b : Math.min(d, t + VIDEO_AB_SPAN));
+  } else {
+    const keepA = videoAb.active && t - VIDEO_AB_MIN_GAP >= videoAb.a;
+    videoAbApply(keepA ? videoAb.a : Math.max(0, t - VIDEO_AB_SPAN), t);
+  }
+}
+
+function videoAbToggle() {
+  if (videoAb.active) videoAbClear();
+  else videoAbMark('a');
+}
+
+function videoAbClear() {
+  videoAb.active = false;
+  videoAbApplyUi();
+}
+
+/* Lecture normale : à chaque image présentée, la borne de fin atteinte
+   relance — retour en A (boucle A–B) ou bascule à rebours (boomerang).
+   La boucle de rappels s'éteint d'elle-même (pause, bornes retirées, sens
+   inversé, boomerang coupé) et redémarre à la lecture (événement play),
+   à la pose des bornes ou à l'activation du boomerang. */
+function videoAbWatch() {
+  if (videoAbWatchId || videoReverse || videoEl.paused) return;
+  if (!videoAb.active && !videoBoomerang) return;
+  const tick = () => {
+    videoAbWatchId = 0;
+    if (!videoActive || videoReverse || videoEl.paused) return;
+    if (!videoAb.active && !videoBoomerang) return;
+    const end = videoAb.active ? videoAb.b : videoAbDuration();
+    // boomerang : on bascule un cran avant la fin pour éviter l'événement
+    // ended (la balise resterait coincée, loop native étant coupée)
+    if (end && videoEl.currentTime >= end - (videoBoomerang ? 0.03 : 0)) {
+      if (videoBoomerang) {
+        videoSetReverse(true);
+        return;
+      }
+      videoEl.currentTime = videoAb.a;
+      videoSyncTime();
+    }
+    videoAbWatchId = videoAbNextFrame(tick);
+  };
+  videoAbWatchId = videoAbNextFrame(tick);
+}
+
+function videoAbNextFrame(cb) {
+  return videoEl.requestVideoFrameCallback ? videoEl.requestVideoFrameCallback(cb) : requestAnimationFrame(cb);
+}
+
+/* Repères A et B : glisser (l'image de la borne s'affiche, lecture suspendue
+   le temps du réglage), molette pour un cran fin. Le pointeur est capturé
+   par le repère : le rail ne voit pas ce clic comme une recherche. */
+for (const [point, marker] of Object.entries(videoAbMarkers)) {
+  marker.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !videoAb.active) return;
+    e.stopPropagation();
+    e.preventDefault();
+    videoAbDrag = { point, lastX: e.clientX, wasPlaying: videoIsPlaying() };
+    if (videoAbDrag.wasPlaying) videoPause();
+    marker.classList.add('is-dragging');
+    marker.setPointerCapture(e.pointerId);
+    videoEl.currentTime = videoAb[point];
+    videoSyncTime();
+  });
+
+  marker.addEventListener('pointermove', (e) => {
+    if (!videoAbDrag || videoAbDrag.point !== point) return;
+    const d = videoAbDuration();
+    const width = videoSeek.getBoundingClientRect().width;
+    if (!d || !width) return;
+    const dx = e.clientX - videoAbDrag.lastX;
+    videoAbDrag.lastX = e.clientX;
+    // déplacement relatif : Maj peut être pressée ou relâchée en cours de geste
+    const dt = (dx / width) * d * (e.shiftKey ? VIDEO_AB_FINE_FACTOR : 1);
+    videoAbSetPoint(point, videoAb[point] + dt);
+    videoEl.currentTime = videoAb[point];
+    videoSyncTime();
+  });
+
+  const endDrag = () => {
+    if (!videoAbDrag || videoAbDrag.point !== point) return;
+    const { wasPlaying } = videoAbDrag;
+    videoAbDrag = null;
+    marker.classList.remove('is-dragging');
+    if (wasPlaying) videoPlay();
+    if (videoLastMouse) videoUpdateProximity(videoLastMouse.x, videoLastMouse.y);
+  };
+  marker.addEventListener('pointerup', endDrag);
+  marker.addEventListener('pointercancel', endDrag);
+
+  marker.addEventListener(
+    'wheel',
+    (e) => {
+      if (!videoAb.active) return;
+      e.preventDefault();
+      e.stopPropagation(); // la scène zoomerait la vidéo
+      const step = VIDEO_AB_WHEEL_STEP * (e.shiftKey ? 10 : 1);
+      videoAbSetPoint(point, videoAb[point] + (e.deltaY < 0 ? step : -step));
+    },
+    { passive: false }
+  );
+}
+
+/* --- Lecture inversée ----------------------------------------------------
+   Chromium n'accepte pas de playbackRate négatif : la lecture à rebours
+   est émulée. La balise reste en pause et currentTime recule, une
+   recherche après l'autre — chaque pas n'est lancé qu'une fois le
+   précédent affiché (événement seeked), et sa longueur suit l'horloge
+   réelle × vitesse de lecture : le rythme est juste, quitte à sauter des
+   images si le décodage ne suit pas (les GOP longs coûtent cher à
+   rebours). Sans son, forcément. Option propre à chaque vidéo ; la boucle
+   (entière ou A–B) est respectée dans ce sens aussi. Le boomerang s'en
+   sert pour le retour : arrivé au début, il reprend l'aller. */
+
+const VIDEO_REV_MAX_STEP = 0.25; // s : un décrochage n'entraîne jamais un saut
+
+let videoReverse = false;
+let videoBoomerang = false;
+let videoRevPlaying = false;
+let videoRevClock = 0; // performance.now() du dernier pas
+let videoRevSeeking = false; // un pas est en cours d'affichage
+
+function videoSetReverse(on) {
+  if (on === videoReverse) return;
+  const wasPlaying = videoIsPlaying();
+  videoPause(); // arrête le moteur en place…
+  videoReverse = on;
+  videoUi.classList.toggle('is-reverse', on);
+  videoReverseBtn.classList.toggle('active', on);
+  if (wasPlaying) videoPlay(); // … et reprend dans le nouveau sens
+  videoSyncPlayState();
+  videoAbWatch(); // retour au sens normal : la borne B est de nouveau surveillée
+}
+
+function videoRevStart() {
+  if (videoRevPlaying || !videoActive) return;
+  if (!videoEl.paused) videoEl.pause();
+  if (videoEl.ended) videoEl.currentTime = Math.max(0, (videoEl.duration || 0) - 0.05);
+  const d = videoAbDuration();
+  const start = videoAb.active ? videoAb.a : 0;
+  // déjà au début (de la vidéo ou de la plage) : repart de la fin, comme
+  // une relance en lecture normale repart du début
+  if (d && videoEl.currentTime <= start + 0.01) {
+    videoEl.currentTime = videoAb.active ? videoAb.b : Math.max(0, d - 0.05);
+  }
+  videoRevPlaying = true;
+  videoRevClock = performance.now() - 16; // premier pas : une image, sans attendre
+  videoSyncPlayState();
+  videoRevStep();
+}
+
+function videoRevStop() {
+  if (!videoRevPlaying) return;
+  videoRevPlaying = false;
+  videoRevSeeking = false;
+  videoSyncPlayState();
+}
+
+function videoRevStep() {
+  if (!videoRevPlaying || videoRevSeeking || !videoActive) return;
+  const now = performance.now();
+  const dt = Math.min(VIDEO_REV_MAX_STEP, ((now - videoRevClock) / 1000) * videoRate);
+  videoRevClock = now;
+  const start = videoAb.active ? videoAb.a : 0;
+  let t = videoEl.currentTime - dt;
+  if (t <= start) {
+    if (videoBoomerang) {
+      videoEl.currentTime = start;
+      videoSyncTime();
+      videoSetReverse(false); // rebond : l'aller reprend
+      return;
+    }
+    if (videoAb.active) {
+      t = videoAb.b;
+    } else if (videoLoop) {
+      t = Math.max(0, videoAbDuration() - 0.05);
+    } else {
+      videoEl.currentTime = start; // début atteint : fin de lecture
+      videoSyncTime();
+      videoRevStop();
+      return;
+    }
+  }
+  videoRevSeeking = true;
+  videoEl.currentTime = t;
+  videoSyncTime();
+}
+
+videoEl.addEventListener('seeked', () => {
+  if (!videoRevSeeking) return;
+  videoRevSeeking = false;
+  if (videoRevPlaying) requestAnimationFrame(videoRevStep);
+});
+
+/* --- Boomerang -----------------------------------------------------------
+   Aller puis retour, en boucle, en réutilisant le moteur inversé pour le
+   rebond. Réservé aux clips courts : le bouton n'apparaît que si la durée
+   (connue) est de 10 s ou moins — un aller-retour sur un plan long serait
+   pénible, et le décodage à rebours coûte cher. Option propre à chaque
+   vidéo ; une boucle A–B active borne le rebond à [A, B]. */
+
+const VIDEO_BOOM_MAX = 10; // s : au-delà, le bouton reste masqué
+const VIDEO_BOOM_EPS = 0.05; // s : marge de flottant des durées de conteneur
+
+function videoBoomAllowed() {
+  const d = videoEl.duration;
+  return videoActive && Number.isFinite(d) && d > 0 && d <= VIDEO_BOOM_MAX + VIDEO_BOOM_EPS;
+}
+
+function videoBoomSyncUi() {
+  const ok = videoBoomAllowed();
+  videoBoomBtn.hidden = !ok;
+  videoUi.classList.toggle('can-boomerang', ok);
+  if (!ok && videoBoomerang) videoSetBoomerang(false);
+}
+
+function videoSetBoomerang(on) {
+  if (on && !videoBoomAllowed()) return;
+  if (on === videoBoomerang) return;
+  videoBoomerang = on;
+  videoBoomBtn.classList.toggle('active', on);
+  videoUi.classList.toggle('is-boomerang', on);
+  videoSyncNativeLoop();
+  if (on) videoAbWatch(); // l'aller surveille déjà la fin
+}
+
+/* --- Sonde de conteneur ----------------------------------------------------
+   Codecs, fréquence d'images, piste audio : lus par VideoInfo (video-info.js)
+   dès l'ouverture, en parallèle du décodage. Alimente la barre d'outils
+   (updateFileMeta) et le popup d'informations (showInfo). */
+
+let videoProbe = null; // VideoProbe de la vidéo affichée (null : inconnue ou en cours)
+
+async function videoProbeLoad(file) {
+  videoProbe = null;
+  const probe = await window.VideoInfo.probe(file.path);
+  if (!videoActive || currentFile()?.path !== file.path) return; // déjà ailleurs
+  videoProbe = probe;
+  updateFileMeta();
+  if (!infoOverlay.hidden) showInfo(); // popup déjà ouvert : complété à la volée
+}
+
+/** « 29,97 » — trois décimales utiles au plus (23,976), sans zéros inutiles. */
+function formatFps(fps) {
+  return Number(fps.toFixed(3)).toLocaleString('fr-FR');
+}
+
 /* --- Événements du média --- */
 
 videoEl.addEventListener('loadedmetadata', () => {
   if (!videoActive) return;
   videoSyncTime();
+  videoAbApplyUi(); // durée connue : bornes A–B positionnables
+  videoBoomSyncUi(); // durée connue : boomerang si le clip est assez court
   videoApplyTransform(); // dimensions connues : libellé de zoom exact
   updateFileMeta();
   showResBadge(videoEl.videoWidth, videoEl.videoHeight);
   // la vidéo est prête : vignettes et préchargement des voisines reprennent
   releaseThumbs();
   schedulePreload();
+});
+
+videoEl.addEventListener('durationchange', () => {
+  if (videoActive) videoBoomSyncUi();
 });
 
 videoEl.addEventListener('timeupdate', () => {
@@ -3920,9 +4619,38 @@ videoEl.addEventListener('progress', () => {
   videoSetBuffer(b.length ? b.end(b.length - 1) / videoEl.duration : 0);
 });
 
-videoEl.addEventListener('play', videoSyncPlayState);
+videoEl.addEventListener('play', () => {
+  videoSyncPlayState();
+  videoAbWatch(); // surveille la borne B image par image
+});
 videoEl.addEventListener('pause', videoSyncPlayState);
-videoEl.addEventListener('ended', videoSyncPlayState);
+videoEl.addEventListener('ended', () => {
+  if (!videoActive || videoReverse) {
+    videoSyncPlayState();
+    return;
+  }
+  // fin atteinte avant le rebond image par image : le boomerang bascule
+  if (videoBoomerang) {
+    videoSetReverse(true);
+    videoPlay(); // ended : videoIsPlaying() est faux, il faut relancer
+    return;
+  }
+  // fin de fichier avec une boucle A–B (B posé sur la fin, ou lecture
+  // relancée au-delà de B) : la boucle reprend en A
+  if (videoAb.active) {
+    videoEl.currentTime = videoAb.a;
+    videoPlay();
+    return;
+  }
+  // certains conteneurs n'honorent pas loop : on relance à la main
+  if (videoLoop) {
+    videoEl.currentTime = 0;
+    videoPlay();
+    return;
+  }
+  videoSyncPlayState();
+});
+
 videoEl.addEventListener('volumechange', videoSyncVolumeUi);
 
 videoEl.addEventListener('error', () => {
@@ -3962,7 +4690,7 @@ stage.addEventListener('mouseleave', () => {
   stageNavApply(null, 0); // les flèches aussi
   if (!videoActive) return;
   videoLastMouse = null;
-  if (!videoSeekDrag && videoRateMenu.hidden) videoApplyBarOpacity(0);
+  if (!videoSeekDrag && !videoAbDrag && videoRateMenu.hidden) videoApplyBarOpacity(0);
 });
 
 /* --- Barre de progression : clic et glisser pour se déplacer --- */
@@ -3987,8 +4715,8 @@ videoSeek.addEventListener('pointerdown', (e) => {
   // chercher un instant précis pendant que l'image défile est pénible :
   // la lecture est suspendue le temps du glisser, et ne reprend au relâché
   // que si elle était en cours au moment de saisir le curseur
-  videoSeekWasPlaying = !videoEl.paused && !videoEl.ended;
-  if (videoSeekWasPlaying) videoEl.pause();
+  videoSeekWasPlaying = videoIsPlaying();
+  if (videoSeekWasPlaying) videoPause();
   videoSeek.classList.add('is-seeking');
   videoSeek.setPointerCapture(e.pointerId);
   videoSeekToEvent(e);
@@ -4003,8 +4731,7 @@ const videoSeekEnd = () => {
   videoSeekDrag = false;
   if (videoSeekWasPlaying) {
     videoSeekWasPlaying = false;
-    const p = videoEl.play();
-    if (p) p.catch(() => {});
+    videoPlay();
   }
   videoSeek.classList.remove('is-seeking');
   // fin du glisser : l'opacité reprend la main selon la position réelle
@@ -4024,6 +4751,9 @@ document.getElementById('video-back5').addEventListener('click', () => videoSeek
 document.getElementById('video-fwd5').addEventListener('click', () => videoSeekBy(5));
 document.getElementById('video-fwd10').addEventListener('click', () => videoSeekBy(10));
 videoLoopBtn.addEventListener('click', () => videoSetLoop(!videoLoop));
+videoAbBtn.addEventListener('click', videoAbToggle);
+videoReverseBtn.addEventListener('click', () => videoSetReverse(!videoReverse));
+videoBoomBtn.addEventListener('click', () => videoSetBoomerang(!videoBoomerang));
 videoMuteBtn.addEventListener('click', videoToggleMute);
 
 videoVolume.addEventListener('input', () => {

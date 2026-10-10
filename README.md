@@ -97,6 +97,7 @@ L'interface par défaut : une barre d'onglets, une barre d'outils, l'image, un b
   - **rognage** avec poignées et grille des tiers (`Entrée` applique) ;
   - les formats non ré-encodables (BMP, TIFF, GIF, SVG, AVIF, ICO) sont convertis en PNG, l'original part à la corbeille — **sauf les PSD, jamais touchés** (le résultat s'écrit en PNG à côté).
 - **Informations** : nom, résolution et poids dans la barre d'outils ; popup complète (`I`) avec fichier, image, dates, chemin.
+- **Vidéos** (MP4, M4V, MOV, MKV, WebM) lues par le décodeur natif de Chromium, dans la même scène (zoom à la molette, déplacement au glisser) : barre de contrôles flottante qui s'efface quand la souris s'en éloigne — lecture/pause, ±5 s / ±10 s, retour au début, boucle, **boucle A–B** (deux repères déplaçables sur la barre de progression, l'image de la borne s'affiche pendant le réglage ; `Maj` pour un déplacement fin, molette pour ±0,1 s), **lecture inversée** (`R`, émulée par recherches successives : sans son, fluidité selon le codec), **boomerang** (`O`, aller-retour en boucle — bouton visible seulement si la vidéo fait 10 s ou moins), vitesse 0,25× à 2×, volume jusqu'à 200 %. Informations vidéo dans la barre d'outils (dimensions, durée, fréquence d'images, poids) et dans le popup `I` : codecs vidéo/audio et profil, conteneur, nombre d'images, débit moyen, canaux et échantillonnage — lus dans les en-têtes du conteneur (`renderer/video-info.js`), sans dépendance.
 - **Impression** directe (`Ctrl+P`, rendu isolé dans une fenêtre cachée), **suppression** vers la corbeille (`Suppr`, avec confirmation), ouverture de fichier (`Ctrl+O`).
 - **Préchargement** des images voisines : flèche gauche/droite quasi instantanée, même sur un dossier réseau.
 - Interface premium sombre ou claire (voir §13), **icônes vectorielles SVG uniquement** (aucun emoji).
@@ -282,6 +283,23 @@ Aucun autre fichier n'est écrit à l'insu de l'utilisateur ; les préférences 
 | `Suppr` | corbeille (confirmation) |
 | `Ctrl+O` / `Ctrl+P` | ouvrir / imprimer |
 
+### Lecteur vidéo
+
+| Touche | Action |
+|---|---|
+| `Espace`, clic sur la vidéo | lecture / pause |
+| `←` `→` (`Maj` : ±10 s) | reculer / avancer de 5 s |
+| `↑` `↓` | volume (jusqu'à 200 %) |
+| `+` / `-` | vitesse de lecture |
+| `Début` | retour au début (de la boucle A–B si elle est active) |
+| `L` / `Maj+L` | boucle / boucle A–B |
+| `A` / `B` | poser la borne A / B à l'instant courant |
+| `R` | lecture inversée |
+| `O` | boomerang (vidéos de 10 s ou moins) |
+| `M` | couper le son |
+| `PgPréc` / `PgSuiv` | vidéo précédente / suivante |
+| `0` | zoom ajusté |
+
 ### Mode Pro (en plus)
 
 | Touche | Action |
@@ -322,6 +340,7 @@ renderer/
   renderer.js           logique visionneuse, onglets, bandeau + tri, galerie, OCR,
                         upscale, accueil, modes Basic/Pro
   styles.css            thème premium (sombre + clair)
+  video-info.js         sonde de conteneur vidéo (MP4/MOV, MKV/WebM : codecs, fps, audio)
   paint.js / paint.css  module Paint
   pro.js / pro.css      module Pro (chargé à la demande)
   i18n/                 traductions (11 langues, catalogue + locales JSON)
@@ -353,9 +372,10 @@ npm run dev -- --smoke --smoke-gallery image.jpg     # galerie Global (tri, filt
 npm run dev -- --smoke --smoke-tabs image.jpg        # onglets (vues indépendantes)
 npm run dev -- --smoke --smoke-ocr image.jpg         # OCR (couche de texte, sélection, copie)
 npm run dev -- --smoke --smoke-strip image.jpg       # tri du bandeau (nom/date, inversion)
+npm run dev -- --smoke --smoke-video video.mp4       # lecteur vidéo (boucle A–B, lecture inversée, boomerang, infos)
 ```
 
-Les smoke OCR et bandeau écrivent en plus une **capture d'écran** de contrôle dans le dossier temporaire.
+Les smoke OCR, bandeau et vidéo écrivent en plus une **capture d'écran** de contrôle dans le dossier temporaire.
 
 ### Notes techniques
 
