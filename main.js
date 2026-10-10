@@ -489,6 +489,145 @@ function createWindow(contextPromise = null) {
           }
           app.quit();
         }, 1500);
+      } else if (process.argv.includes('--smoke-video')) {
+        // Lecteur vidéo : lecture, boucle A–B (retour en A, bornes ordonnées,
+        // repères), lecture inversée (currentTime recule, boucle respectée),
+        // sonde de conteneur et popup d'informations.
+        setTimeout(async () => {
+          try {
+            // la capture est prise à mi-parcours, boucle A–B affichée : le
+            // scénario s'y suspend (window.__smokeShot) le temps du cliché
+            const shotPath = path.join(app.getPath('temp'), 'istudio-smoke-video.png');
+            const shotWhenReady = (async () => {
+              while (!(await mainWindow.webContents.executeJavaScript('Boolean(window.__smokeShot)'))) {
+                await new Promise((res) => setTimeout(res, 100));
+              }
+              await new Promise((res) => setTimeout(res, 150));
+              const shot = await mainWindow.webContents.capturePage();
+              fssync.writeFileSync(shotPath, shot.toPNG());
+              await mainWindow.webContents.executeJavaScript('window.__smokeShot(); window.__smokeShot = null');
+            })();
+            const r = await mainWindow.webContents.executeJavaScript(
+              `(async () => {
+                 const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+                 const key = (k, opts) =>
+                   window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...opts }));
+                 const v = document.getElementById('video');
+                 const ui = document.getElementById('video-ui');
+                 await wait(2500);
+                 const shown = !v.hidden && v.videoWidth > 0 && Number.isFinite(v.duration);
+                 const playing = ui.classList.contains('is-playing') && !v.paused;
+                 const d = v.duration;
+
+                 // boucle A–B : B posé, A déduit ; la lecture reste dans [A, B]
+                 v.currentTime = Math.min(2, d / 2);
+                 await wait(200);
+                 key('a');
+                 const abOn = ui.classList.contains('has-ab');
+                 const a1 = videoAb.a;
+                 const b1 = videoAb.b;
+                 const abOrdered = abOn && a1 < b1 && b1 <= d;
+                 v.currentTime = Math.max(a1, b1 - 0.4);
+                 await wait(1200);
+                 const abLooped = v.currentTime >= a1 - 0.05 && v.currentTime < b1;
+                 // A ne peut pas croiser B (écart minimal), B ne peut pas croiser A
+                 videoAbSetPoint('a', b1 + 5);
+                 const aClamped = videoAb.a < videoAb.b;
+                 videoAbSetPoint('b', -5);
+                 const bClamped = videoAb.b > videoAb.a && videoAb.b - videoAb.a >= 0.19;
+                 // B avant A au clavier : A est déduit en amont
+                 v.currentTime = 0.5;
+                 await wait(150);
+                 key('b');
+                 const bMarked = Math.abs(videoAb.b - 0.5) < 0.2 && videoAb.a < videoAb.b;
+                 const markersVisible = getComputedStyle(document.getElementById('video-ab-a')).display !== 'none';
+                 // capture de contrôle avec la boucle A–B visible (étiquette du repère B)
+                 document.getElementById('video-ab-b').classList.add('is-dragging');
+                 await new Promise((res) => window.__smokeShot = res);
+                 document.getElementById('video-ab-b').classList.remove('is-dragging');
+                 // retrait : Maj+L
+                 key('L', { shiftKey: true });
+                 const abOff = !ui.classList.contains('has-ab') && v.loop === true;
+
+                 // lecture inversée : currentTime recule, la balise reste en pause
+                 v.currentTime = Math.min(3, d - 0.5);
+                 await wait(200);
+                 key('r');
+                 const revOn = ui.classList.contains('is-reverse') && videoReverse;
+                 const t0 = v.currentTime;
+                 await wait(900);
+                 const t1 = v.currentTime;
+                 const revMoving = revOn && t1 < t0 - 0.2 && v.paused && ui.classList.contains('is-playing');
+                 // pause / reprise en sens inverse via Espace
+                 key(' ');
+                 await wait(300);
+                 const revPaused = !ui.classList.contains('is-playing');
+                 const tp = v.currentTime;
+                 await wait(400);
+                 const revStayed = Math.abs(v.currentTime - tp) < 0.05;
+                 key(' ');
+                 await wait(400);
+                 const revResumed = ui.classList.contains('is-playing') && v.currentTime < tp;
+                 // boucle A–B en sens inverse : de A on repart en B
+                 v.currentTime = 1.0;
+                 await wait(100);
+                 key('a');
+                 const ra = videoAb.a;
+                 const rb = videoAb.b;
+                 v.currentTime = ra + 0.3;
+                 await wait(1200);
+                 const revAbLooped = v.currentTime > ra && v.currentTime <= rb + 0.05;
+                 key('L', { shiftKey: true });
+                 // retour au sens normal : la balise reprend la lecture native
+                 key('r');
+                 await wait(400);
+                 const fwdBack = !videoReverse && !v.paused;
+
+                 // boomerang : bouton visible seulement si la vidéo fait 10 s
+                 // ou moins ; sur un clip court, O bascule l'aller en retour
+                 const boomBtn = document.getElementById('video-boomerang');
+                 const boomEligible = Number.isFinite(d) && d > 0 && d <= 10.05;
+                 const boomUi = boomBtn.hidden !== boomEligible;
+                 let boomOn = false;
+                 let boomFlipped = false;
+                 if (boomEligible) {
+                   v.currentTime = Math.max(0, d - 0.35);
+                   await wait(150);
+                   key('o');
+                   boomOn = videoBoomerang && boomBtn.classList.contains('active');
+                   await wait(900);
+                   boomFlipped = boomOn && videoReverse && v.currentTime < d - 0.05;
+                   key('o');
+                 }
+
+                 // sonde et popup d'informations
+                 await wait(300);
+                 const probe = videoProbe;
+                 const metaText = document.getElementById('file-meta').textContent;
+                 key('i');
+                 await wait(100);
+                 const rows = [...document.querySelectorAll('#info-body .info-row')]
+                   .map((r) => r.querySelector('.info-label').textContent + '=' + r.querySelector('.info-value').textContent);
+                 const sections = [...document.querySelectorAll('#info-body .info-section')].map((s) => s.textContent);
+                 document.getElementById('info-close').click();
+                 const has = (label) => rows.some((r) => r.startsWith(label + '='));
+                 const infoOk = sections.includes('Vidéo') && sections.includes('Audio') &&
+                   has('Durée') && has('Fréquence d’images') && has('Codec vidéo') && has('Conteneur') && has('Débit moyen');
+                 return {
+                   shown, playing, abOn, abOrdered, abLooped, aClamped, bClamped, bMarked, markersVisible, abOff,
+                   revOn, revMoving, revPaused, revStayed, revResumed, revAbLooped, fwdBack,
+                   boomUi, boomOn, boomFlipped,
+                   probe, metaText, infoOk, rows,
+                 };
+               })()`
+            );
+            await shotWhenReady;
+            console.log(`SMOKE VIDEO: ${JSON.stringify({ ...r, shotPath })}`);
+          } catch (err) {
+            console.log(`SMOKE VIDEO ERROR: ${err.message}`);
+          }
+          app.quit();
+        }, 1500);
       } else if (process.argv.includes('--smoke-strip')) {
         // Tri du bandeau : nom (ordre Explorateur) par défaut, bascule par
         // date puis inversion, retour au nom = ordre initial.
@@ -1757,6 +1896,26 @@ ipcMain.handle('read-file-head', async (_e, { filePath, bytes }) => {
     const n = Math.max(1, Math.min(st.size, bytes || 262144));
     const buf = Buffer.alloc(n);
     await fh.read(buf, 0, n, 0);
+    return { data: buf, size: st.size };
+  } catch {
+    return null;
+  } finally {
+    if (fh) await fh.close().catch(() => {});
+  }
+});
+
+/* Plage d'octets arbitraire (sonde des conteneurs vidéo : l'atome « moov »
+   d'un MP4 peut se trouver en fin de fichier). Même principe que
+   read-file-head : on ne rapatrie jamais plus que demandé. */
+ipcMain.handle('read-file-range', async (_e, { filePath, offset, bytes }) => {
+  let fh = null;
+  try {
+    fh = await fs.open(filePath, 'r');
+    const st = await fh.stat();
+    const start = Math.max(0, Math.min(st.size, Number(offset) || 0));
+    const n = Math.max(0, Math.min(st.size - start, Number(bytes) || 0));
+    const buf = Buffer.alloc(n);
+    if (n) await fh.read(buf, 0, n, start);
     return { data: buf, size: st.size };
   } catch {
     return null;
